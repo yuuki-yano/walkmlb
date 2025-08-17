@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WalkMLB: Game Detail</title>
+  <base href="./">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans JP", sans-serif; margin: 2rem; }
+    header { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: .4rem .6rem; }
+    th { background: #fafafa; }
+    .muted { color: #666; }
+    .ok { color: #0a7; font-weight: 600; }
+    .status { font-weight: 700; }
+    .chip { display: inline-block; padding: .2rem .5rem; border-radius: 999px; background:#eef; margin-right: .3rem; }
+    @media (max-width: 768px) {
+      .cols { grid-template-columns: 1fr; }
+      body { margin: 1rem; }
+    }
+    .spinner { display:inline-block; width:24px; height:24px; border:3px solid #ccc; border-top-color:#09f; border-radius:50%; animation:spin 1s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <a href="index.html">← Back</a>
+  <h1 id="title">Game</h1>
+  <p class="status" id="status"></p>
+
+  <div class="cols">
+    <div>
+      <h3 id="homeTitle">Home</h3>
+      <p>R: <span id="homeR">-</span> / H: <span id="homeH">-</span> / E: <span id="homeE">-</span> / HR: <span id="homeHR">-</span></p>
+  <p><b>ヒット</b>: <span id="homeHits"></span> （小計（歩数）: <span id="homeHitsSum">-</span>）</p>
+      <p><b>エラー</b>: <span id="homeErrors"></span> （小計（歩数）: <span id="homeErrorsSum">-</span>）</p>
+  <p><b>ホームラン</b>: <span id="homeHRPlayers"></span> （小計（歩数）: <span id="homeHRSum">-</span>）</p>
+  <p><b>三振</b>: <span id="homeSOPlayers"></span> （小計（歩数）: <span id="homeSOSum">-</span>）</p>
+      <div>
+        <button data-side="home" class="btnSteps">ホームで目標歩数（チーム合計）</button>
+        <button data-side="home" class="btnStepsPlayers">ホームで目標歩数（選手イベント）</button>
+        <span class="ok" id="homeSteps"></span>
+      </div>
+    </div>
+    <div>
+      <h3 id="awayTitle">Away</h3>
+      <p>R: <span id="awayR">-</span> / H: <span id="awayH">-</span> / E: <span id="awayE">-</span> / HR: <span id="awayHR">-</span></p>
+  <p><b>ヒット</b>: <span id="awayHits"></span> （小計（歩数）: <span id="awayHitsSum">-</span>）</p>
+      <p><b>エラー</b>: <span id="awayErrors"></span> （小計（歩数）: <span id="awayErrorsSum">-</span>）</p>
+  <p><b>ホームラン</b>: <span id="awayHRPlayers"></span> （小計（歩数）: <span id="awayHRSum">-</span>）</p>
+  <p><b>三振</b>: <span id="awaySOPlayers"></span> （小計（歩数）: <span id="awaySOSum">-</span>）</p>
+      <div>
+        <button data-side="away" class="btnSteps">アウェイで目標歩数（チーム合計）</button>
+        <button data-side="away" class="btnStepsPlayers">アウェイで目標歩数（選手イベント）</button>
+        <span class="ok" id="awaySteps"></span>
+      </div>
+    </div>
+
+  <h3>スコアボード</h3>
+  <table>
+    <thead>
+      <tr id="innHead"><th></th></tr>
+    </thead>
+    <tbody>
+      <tr id="rowAway"><th>Away</th></tr>
+      <tr id="rowHome"><th>Home</th></tr>
+    </tbody>
+  </table>
+
+  <h3>選手イベントの係数（このページだけの一時設定）</h3>
+  <div class="row">
+    <label>Base: <input id="wBase" type="number" value="6000" style="width:6em"></label>
+    <label>Hit: <input id="wHit" type="number" value="-100" style="width:6em"></label>
+    <label>HR: <input id="wHR" type="number" value="-300" style="width:6em"></label>
+    <label>Error: <input id="wErr" type="number" value="50" style="width:6em"></label>
+    <label>SO: <input id="wSO" type="number" value="100" style="width:6em"></label>
+    <button id="btnRecalc" class="btn">この設定で再計算</button>
+  </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const gamePk = params.get('gamePk');
+
+    function chips(arr){
+      return (arr||[]).map(n=>{
+        if (typeof n === 'string') return `<span class="chip">${n}</span>`;
+        // when object like {name, hits}
+        const key = Object.keys(n).find(k=>k!=='name');
+        return `<span class="chip" title="${key}">${n.name}${n[key]>1?`×${n[key]}`:''}</span>`;
+      }).join(' ');
+    }
+
+    function showLoading(where, on) {
+      where.innerHTML = on ? '<span class="spinner"></span>' : '';
+    }
+
+    async function load() {
+      const loadTarget = document.getElementById('status');
+      showLoading(loadTarget, true);
+  // Compute basePath robustly: directory of this page without trailing slash
+  const basePath = new URL('.', window.location.href).pathname.replace(/\/$/, '');
+  // Helper: try basePath + rel first, then absolute rel as fallback
+  const fetchJSON = async (relPath) => {
+    const candidates = [ `${basePath}${relPath}`, relPath ];
+    let lastErr;
+    for (const url of candidates) {
+      try {
+        const r = await fetch(url);
+        if (r.ok) return await r.json();
+        lastErr = new Error(`HTTP ${r.status} for ${url}`);
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    console.warn('All fetch attempts failed for', relPath, lastErr);
+    throw lastErr;
+  };
+  const res = await fetch(`${basePath}/api/games/${gamePk}`);
+      if (!res.ok) return;
+      const d = await res.json();
+      showLoading(loadTarget, false);
+      document.getElementById('title').textContent = `${d.away.team} at ${d.home.team} (${d.date})`;
+      document.getElementById('status').textContent = `${d.status.detailed} (${d.status.abstract})`;
+
+  const home = d.home, away = d.away;
+      document.getElementById('homeTitle').textContent = home.team;
+      document.getElementById('awayTitle').textContent = away.team;
+
+  document.getElementById('homeR').textContent = home.runsTotal ?? '-';
+  document.getElementById('homeH').textContent = home.hitsTotal ?? '-';
+  document.getElementById('homeE').textContent = home.errorsTotal ?? '-';
+  document.getElementById('homeHR').textContent = home.homersTotal ?? '-';
+
+  document.getElementById('awayR').textContent = away.runsTotal ?? '-';
+  document.getElementById('awayH').textContent = away.hitsTotal ?? '-';
+  document.getElementById('awayE').textContent = away.errorsTotal ?? '-';
+  document.getElementById('awayHR').textContent = away.homersTotal ?? '-';
+
+  document.getElementById('homeHits').innerHTML = chips(home.hitsPlayers || []);
+  document.getElementById('homeErrors').innerHTML = chips(home.errorsPlayers || []);
+  document.getElementById('homeHRPlayers').innerHTML = chips(home.homeRunsPlayers || []);
+  document.getElementById('homeSOPlayers').innerHTML = chips(home.strikeOutsPlayers || []);
+
+      document.getElementById('awayHits').innerHTML = chips(away.hitsPlayers || []);
+      document.getElementById('awayErrors').innerHTML = chips(away.errorsPlayers || []);
+      document.getElementById('awayHRPlayers').innerHTML = chips(away.homeRunsPlayers || []);
+      document.getElementById('awaySOPlayers').innerHTML = chips(away.strikeOutsPlayers || []);
+
+  // Subtotals (小計) for events per side
+  const sumByKey = (arr, key) => (arr||[]).reduce((s, x) => s + (typeof x === 'object' ? (x[key] || 0) : 1), 0);
+  // home
+  document.getElementById('homeHitsSum').textContent = sumByKey(home.hitsPlayers, 'hits');
+  document.getElementById('homeErrorsSum').textContent = sumByKey(home.errorsPlayers, 'errors');
+  document.getElementById('homeHRSum').textContent = sumByKey(home.homeRunsPlayers, 'homeRuns');
+  document.getElementById('homeSOSum').textContent = sumByKey(home.strikeOutsPlayers, 'strikeOuts');
+  // away
+  document.getElementById('awayHitsSum').textContent = sumByKey(away.hitsPlayers, 'hits');
+  document.getElementById('awayErrorsSum').textContent = sumByKey(away.errorsPlayers, 'errors');
+  document.getElementById('awayHRSum').textContent = sumByKey(away.homeRunsPlayers, 'homeRuns');
+  document.getElementById('awaySOSum').textContent = sumByKey(away.strikeOutsPlayers, 'strikeOuts');
+
+  // Build editable per-player weights lists for both sides
+      const renderEditable = (id, arr, defaultValue) => {
+        const el = document.getElementById(id);
+        el.innerHTML = (arr||[]).map(o=>{
+          const key = Object.keys(o).find(k=>k!=='name');
+          const val = Number(defaultValue);
+          return `<label class="chip">${o.name}<input data-player="${o.name}" data-key="${key}" type="number" value="${val}" style="width:5em;margin-left:.4rem"></label>`;
+        }).join(' ');
+      };
+
+      // Containers for custom weight inputs
+      const homeHitW = document.createElement('div'); homeHitW.id = 'homeHitWeights';
+      const homeHRW = document.createElement('div'); homeHRW.id = 'homeHRWeights';
+      const homeErrW = document.createElement('div'); homeErrW.id = 'homeErrWeights';
+      const homeSOW = document.createElement('div'); homeSOW.id = 'homeSOWeights';
+      document.getElementById('homeHits').after(homeHitW);
+      document.getElementById('homeHRPlayers').after(homeHRW);
+      document.getElementById('homeErrors').after(homeErrW);
+      document.getElementById('homeSOPlayers').after(homeSOW);
+
+      const awayHitW = document.createElement('div'); awayHitW.id = 'awayHitWeights';
+      const awayHRW = document.createElement('div'); awayHRW.id = 'awayHRWeights';
+      const awayErrW = document.createElement('div'); awayErrW.id = 'awayErrWeights';
+      const awaySOW = document.createElement('div'); awaySOW.id = 'awaySOWeights';
+      document.getElementById('awayHits').after(awayHitW);
+      document.getElementById('awayHRPlayers').after(awayHRW);
+      document.getElementById('awayErrors').after(awayErrW);
+      document.getElementById('awaySOPlayers').after(awaySOW);
+
+      // defaults from settings
+    let defaults = {hit:-100, hr:-300, err:50, so:100, base:6000};
+    try {
+  const s = await fetchJSON('/api/steps/settings');
+        defaults = {hit:s.player.perHit, hr:s.player.perHR, err:s.player.perError, so:s.player.perSO, base:s.base};
+        document.getElementById('wBase').value = s.base;
+        document.getElementById('wHit').value = s.player.perHit;
+        document.getElementById('wHR').value = s.player.perHR;
+        document.getElementById('wErr').value = s.player.perError;
+        document.getElementById('wSO').value = s.player.perSO;
+      } catch {}
+
+      renderEditable('homeHitWeights', home.hitsPlayers, defaults.hit);
+      renderEditable('homeHRWeights', home.homeRunsPlayers, defaults.hr);
+      renderEditable('homeErrWeights', home.errorsPlayers, defaults.err);
+      renderEditable('homeSOWeights', home.strikeOutsPlayers, defaults.so);
+      renderEditable('awayHitWeights', away.hitsPlayers, defaults.hit);
+      renderEditable('awayHRWeights', away.homeRunsPlayers, defaults.hr);
+      renderEditable('awayErrWeights', away.errorsPlayers, defaults.err);
+      renderEditable('awaySOWeights', away.strikeOutsPlayers, defaults.so);
+
+      // Helpers to compute step subtotals per event using current per-player weights
+      const computeEventSteps = (playersArr, containerId) => {
+        const inputs = Array.from(document.querySelectorAll(`#${containerId} input`));
+        const weights = Object.fromEntries(inputs.map(inp => [inp.dataset.player, Number(inp.value)]));
+        // playersArr elements have {name, <key>: count}
+        const key = playersArr && playersArr[0] ? Object.keys(playersArr[0]).find(k => k !== 'name') : null;
+        if (!key) return 0;
+        return playersArr.reduce((sum, p) => sum + (weights[p.name] || 0) * (p[key] || 0), 0);
+      };
+
+      const updateSubtotals = () => {
+        // home
+        document.getElementById('homeHitsSum').textContent = computeEventSteps(home.hitsPlayers || [], 'homeHitWeights').toLocaleString();
+        document.getElementById('homeErrorsSum').textContent = computeEventSteps(home.errorsPlayers || [], 'homeErrWeights').toLocaleString();
+        document.getElementById('homeHRSum').textContent = computeEventSteps(home.homeRunsPlayers || [], 'homeHRWeights').toLocaleString();
+        document.getElementById('homeSOSum').textContent = computeEventSteps(home.strikeOutsPlayers || [], 'homeSOWeights').toLocaleString();
+        // away
+        document.getElementById('awayHitsSum').textContent = computeEventSteps(away.hitsPlayers || [], 'awayHitWeights').toLocaleString();
+        document.getElementById('awayErrorsSum').textContent = computeEventSteps(away.errorsPlayers || [], 'awayErrWeights').toLocaleString();
+        document.getElementById('awayHRSum').textContent = computeEventSteps(away.homeRunsPlayers || [], 'awayHRWeights').toLocaleString();
+        document.getElementById('awaySOSum').textContent = computeEventSteps(away.strikeOutsPlayers || [], 'awaySOWeights').toLocaleString();
+      };
+
+      // Initial subtotals
+      updateSubtotals();
+
+      // Recompute on weight input change
+      document.addEventListener('input', (e) => {
+        if (e.target && e.target.matches('#homeHitWeights input, #homeErrWeights input, #homeHRWeights input, #homeSOWeights input, #awayHitWeights input, #awayErrWeights input, #awayHRWeights input, #awaySOWeights input')) {
+          updateSubtotals();
+        }
+      });
+
+      // Bind step goal buttons
+  document.querySelectorAll('.btnSteps').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const side = btn.getAttribute('data-side');
+          const target = document.getElementById(side === 'home' ? 'homeSteps' : 'awaySteps');
+          showLoading(target, true);
+          const j = await fetchJSON(`/api/steps/goal/game/${gamePk}?side=${side}`);
+          showLoading(target, false);
+          target.textContent = `${j.steps.toLocaleString()} 歩`;
+        });
+      });
+
+      document.querySelectorAll('.btnStepsPlayers').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const side = btn.getAttribute('data-side');
+          const target = document.getElementById(side === 'home' ? 'homeSteps' : 'awaySteps');
+          showLoading(target, true);
+          const j = await fetchJSON(`/api/steps/goal/game/${gamePk}/players?side=${side}`);
+          showLoading(target, false);
+          target.textContent = `${j.steps.toLocaleString()} 歩`;
+        });
+      });
+
+      document.getElementById('btnRecalc').addEventListener('click', async () => {
+        const homeTarget = document.getElementById('homeSteps');
+        const awayTarget = document.getElementById('awaySteps');
+        showLoading(homeTarget, true); showLoading(awayTarget, true);
+        const baseVal = Number(document.getElementById('wBase').value);
+        const wHit = Number(document.getElementById('wHit').value);
+        const wHR = Number(document.getElementById('wHR').value);
+        const wErr = Number(document.getElementById('wErr').value);
+        const wSO = Number(document.getElementById('wSO').value);
+
+        // fetch players counts once
+        const [homeCounts, awayCounts] = await Promise.all([
+          fetchJSON(`/api/steps/goal/game/${gamePk}/players?side=home`),
+          fetchJSON(`/api/steps/goal/game/${gamePk}/players?side=away`),
+        ]);
+        const calcWithPerPlayer = (counts, sidePrefix) => {
+          // totals
+          let total = baseVal;
+          const grab = (id) => Array.from(document.querySelectorAll(`#${id} input`)).map(inp=>({name: inp.dataset.player, key: inp.dataset.key, w: Number(inp.value)}));
+          const lists = {
+            hits: grab(`${sidePrefix}HitWeights`),
+            homeRuns: grab(`${sidePrefix}HRWeights`),
+            errors: grab(`${sidePrefix}ErrWeights`),
+            strikeOuts: grab(`${sidePrefix}SOWeights`),
+          };
+          const apply = (playersArr, inputs, keyName) => {
+            const byName = Object.fromEntries(playersArr.map(p=>[p.name, p[keyName]]));
+            for (const it of inputs) {
+              const n = byName[it.name] || 0;
+              total += it.w * n;
+            }
+          };
+          apply(counts.players.hits || [], lists.hits, 'hits');
+          apply(counts.players.homeRuns || [], lists.homeRuns, 'homeRuns');
+          apply(counts.players.errors || [], lists.errors, 'errors');
+          apply(counts.players.strikeOuts || [], lists.strikeOuts, 'strikeOuts');
+          return Math.max(0, Math.trunc(total));
+        };
+        const homeSteps = calcWithPerPlayer(homeCounts, 'home');
+        const awaySteps = calcWithPerPlayer(awayCounts, 'away');
+        showLoading(homeTarget, false); showLoading(awayTarget, false);
+        homeTarget.textContent = `${homeSteps.toLocaleString()} 歩`;
+        awayTarget.textContent = `${awaySteps.toLocaleString()} 歩`;
+      });
+
+      // Scoreboard
+      const head = document.getElementById('innHead');
+      const rAway = document.getElementById('rowAway');
+      const rHome = document.getElementById('rowHome');
+      head.innerHTML = '<th></th>';
+      rAway.innerHTML = `<th>${away.team}</th>`;
+      rHome.innerHTML = `<th>${home.team}</th>`;
+      for (const inn of (d.scoreboard?.innings || [])) {
+        head.innerHTML += `<th>${inn.num}</th>`;
+        rAway.innerHTML += `<td>${inn.away ?? '-'}</td>`;
+        rHome.innerHTML += `<td>${inn.home ?? '-'}</td>`;
+      }
+      head.innerHTML += '<th>R</th>';
+      rAway.innerHTML += `<td>${d.scoreboard?.totals?.away ?? '-'}</td>`;
+      rHome.innerHTML += `<td>${d.scoreboard?.totals?.home ?? '-'}</td>`;
+    }
+
+    load();
+  </script>
+</body>
+</html>

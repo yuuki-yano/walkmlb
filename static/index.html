@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WalkMLB</title>
+  <base href="./">
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans JP", sans-serif; margin: 2rem; }
+    header { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+    input, button, select { padding: .5rem .6rem; font-size: 1rem; }
+  .row { margin: 1rem 0; display:flex; gap:.5rem; flex-wrap: wrap; align-items: center; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: .4rem .6rem; }
+    th { background: #fafafa; }
+    .muted { color: #666; }
+    .ok { color: #0a7; font-weight: 600; }
+  @media (max-width: 768px) { body { margin: 1rem; } table { font-size: 14px; } }
+  .spinner { display:inline-block; width:20px; height:20px; border:3px solid #ccc; border-top-color:#09f; border-radius:50%; animation:spin 1s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <h1>WalkMLB</h1>
+  <p class="muted">指定日のMLB試合と打者成績をインポートし、ヒット/HR/エラーから目標歩数を計算します。</p>
+
+  <section class="row">
+    <label>日付: <input id="date" type="date"></label>
+    <button id="btnImport">インポート</button>
+    <label>チーム: <input id="team" placeholder="(任意)"></label>
+    <button id="btnGoal">目標歩数</button>
+    <span id="goal" class="ok"></span>
+  </section>
+
+  <section class="row">
+    <h3>試合一覧</h3>
+  <table>
+      <thead>
+        <tr>
+      <th>Game</th>
+      <th>ステータス</th>
+      <th>アウェイ</th>
+      <th>R/H/E/HR</th>
+      <th>ホーム</th>
+      <th>R/H/E/HR</th>
+        </tr>
+      </thead>
+      <tbody id="games"></tbody>
+    </table>
+  </section>
+
+  <script>
+    const $ = (sel) => document.querySelector(sel);
+    const dateInput = $('#date');
+  const today = new Date().toISOString().slice(0,10);
+  dateInput.value = today;
+  // favorite team persistence
+  const favTeam = localStorage.getItem('favTeam') || '';
+  if (favTeam) $('#team').value = favTeam;
+
+    function showLoading(where, on) { where.innerHTML = on ? '<span class="spinner"></span>' : ''; }
+
+    async function loadGames() {
+      const d = dateInput.value;
+      const team = $('#team').value.trim();
+      const params = new URLSearchParams({date: d});
+      if (team) params.append('team', team);
+      const tb = $('#games');
+      showLoading(tb, true);
+  const base = window.location.pathname.replace(/index\.html$/, '').replace(/\/$/, '');
+  const res = await fetch(base + '/api/games?' + params.toString());
+      const data = await res.json();
+      tb.innerHTML = '';
+    for (const g of data.games) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><a href="game.html?gamePk=${g.gamePk}">${g.gamePk}</a></td>
+          <td>${(g.status && (g.status.detailed||g.status.abstract)) || '-'}</td>
+      <td>${g.away.team}</td>
+      <td>${g.away.R} / ${g.away.H} / ${g.away.E} / ${g.away.HR}</td>
+      <td>${g.home.team}</td>
+      <td>${g.home.R} / ${g.home.H} / ${g.home.E} / ${g.home.HR}</td>
+        `;
+        tb.appendChild(tr);
+      }
+    }
+
+    async function importDate() {
+      const d = dateInput.value;
+      const btn = $('#btnImport');
+      btn.disabled = true; btn.textContent = 'インポート中...';
+  const base = window.location.pathname.replace(/index\.html$/, '').replace(/\/$/, '');
+  const res = await fetch(base + '/api/import?date=' + d, { method: 'POST' });
+      const data = await res.json();
+      await loadGames();
+      btn.disabled = false; btn.textContent = 'インポート';
+    }
+
+    async function loadGoal() {
+      const d = dateInput.value;
+      const team = $('#team').value.trim();
+      const params = new URLSearchParams({date: d});
+      if (team) params.append('team', team);
+      const goalEl = $('#goal');
+      showLoading(goalEl, true);
+  const base = window.location.pathname.replace(/index\.html$/, '').replace(/\/$/, '');
+  const res = await fetch(base + '/api/steps/goal?' + params.toString());
+      const data = await res.json();
+      showLoading(goalEl, false);
+      goalEl.textContent = `目標 ${data.steps.toLocaleString()} 歩`;
+    }
+
+  $('#btnImport').addEventListener('click', importDate);
+  $('#btnGoal').addEventListener('click', loadGoal);
+  $('#team').addEventListener('change', (e)=> localStorage.setItem('favTeam', e.target.value.trim()));
+
+    loadGames();
+  </script>
+</body>
+</html>

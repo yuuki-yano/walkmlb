@@ -1,0 +1,6 @@
+[tool.ruff]
+line-length = 120
+
+[tool.pyright]
+include = ["app"]
+reportMissingImports = true

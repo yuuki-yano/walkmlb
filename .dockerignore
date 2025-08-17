@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+.walkmlb-cache/
+.venv/
+.vscode/
+.env
+.git
+.gitignore
+node_modules/
