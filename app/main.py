@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from .routers import importer, games, steps
+from .routers import admin
 import asyncio
 from .updater import run_scheduler
 from .db import init_db
@@ -24,6 +25,7 @@ api_prefix = "/api"
 app.include_router(importer.router, prefix=api_prefix, tags=["import"])
 app.include_router(games.router, prefix=api_prefix, tags=["games"])
 app.include_router(steps.router, prefix=api_prefix, tags=["steps"])
+app.include_router(admin.router, prefix=api_prefix, tags=["admin"])
 
 # Static frontend mounted at base path
 # Static frontend mounted at app root (root_pathが外側のサブパスを表現)

@@ -7,6 +7,8 @@ load_dotenv()
 class Settings(BaseModel):
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./walkmlb.db")
     base_path: str = os.getenv("BASE_PATH", "")
+    # Timezone used by updater to decide the 'current' MLB date
+    update_tz: str = os.getenv("UPDATE_TZ", "America/New_York")
     walk_base: int = int(os.getenv("WALK_BASE", 6000))
     walk_per_hit: int = int(os.getenv("WALK_PER_HIT", 100))
     walk_per_hr: int = int(os.getenv("WALK_PER_HR", 300))
