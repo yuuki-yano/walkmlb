@@ -4,7 +4,7 @@ import json
 import logging
 from .db import SessionLocal
 from .crud import upsert_game, upsert_batter
-from .mlb_api import fetch_schedule, fetch_boxscore
+from .mlb_api import fetch_schedule, refresh_boxscore
 from .mlb_api import parse_boxscore_totals, iter_batters
 from .mlb_api import BASE
 import httpx
@@ -34,8 +34,8 @@ async def update_for_date(date: dt.date) -> int:
             except Exception:
                 logger.exception("updater: invalid gamePk in schedule item: %s", g)
                 continue
-            # Boxscore: store + upsert game and batters
-            box = await fetch_boxscore(game_pk)  # fetch (network) and cache inside
+            # Boxscore: always refresh from MLB and overwrite cache so totals update
+            box = await refresh_boxscore(game_pk)
             totals = parse_boxscore_totals(box)
             home_team = box.get("teams", {}).get("home", {}).get("team", {}).get("name", "Home")
             away_team = box.get("teams", {}).get("away", {}).get("team", {}).get("name", "Away")
