@@ -45,7 +45,8 @@ async def update_for_date(date: dt.date) -> int:
                 cab = (cached_status.get("abstract") or "")
                 # Case-sensitive evaluation per request
                 is_final_api = (det == "Final" or ab == "Final")
-                is_game_over_api = (det == "Game Over" or ab == "Game Over")
+                # is_game_over_api = (det == "Game Over" or ab == "Game Over")
+                is_game_over_api = False
                 is_final_db = (cdet == "Final" or cab == "Final")
 
                 # If DB already Final, skip further work
