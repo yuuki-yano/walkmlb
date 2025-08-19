@@ -6,6 +6,7 @@ from .db import SessionLocal
 from .crud import upsert_game, upsert_batter
 from .mlb_api import fetch_schedule, fetch_boxscore
 from .mlb_api import parse_boxscore_totals, iter_batters
+from .mlb_api import get_cached_status, get_cached_linescore, get_cached_boxscore
 from .mlb_api import BASE
 import httpx
 
@@ -25,6 +26,27 @@ async def update_for_date(date: dt.date):
             except Exception:
                 logger.exception("updater: invalid gamePk in schedule item: %s", g)
                 continue
+            # Skip heavy updates for games that are Final and already cached
+            try:
+                sched_status = g.get("status", {}) if isinstance(g, dict) else {}
+                det = (sched_status.get("detailedState") or "").lower()
+                ab = (sched_status.get("abstractGameState") or "").lower()
+                cached_status = get_cached_status(game_pk)
+                cdet = (cached_status.get("detailed") or "").lower()
+                cab = (cached_status.get("abstract") or "").lower()
+                is_final = (
+                    "final" in det or "final" in ab or "game over" in det or
+                    "final" in cdet or "final" in cab or "game over" in cdet
+                )
+                if is_final:
+                    box_cached = bool(get_cached_boxscore(game_pk))
+                    ls_cached = bool((get_cached_linescore(game_pk) or {}).get("innings"))
+                    if box_cached and ls_cached:
+                        logger.info("updater: skip final game game_pk=%s (already cached)", game_pk)
+                        continue
+            except Exception:
+                # If any issue determining final state, proceed with normal update
+                pass
             # Boxscore: store + upsert game and batters
             box = await fetch_boxscore(game_pk)  # fetch (network) and cache inside
             totals = parse_boxscore_totals(box)
