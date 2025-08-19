@@ -25,7 +25,7 @@
   </style>
 </head>
 <body>
-  <a href="index.html">← Back</a>
+  <a id="backLink" href="index.html">← Back</a>
   <h1 id="title">Game</h1>
   <p class="status" id="status"></p>
 
@@ -80,8 +80,11 @@
   </div>
 
   <script>
-    const params = new URLSearchParams(location.search);
-    const gamePk = params.get('gamePk');
+  const params = new URLSearchParams(location.search);
+  const gamePk = params.get('gamePk');
+  const dateParam = params.get('date');
+  const backLink = document.getElementById('backLink');
+  if (dateParam) backLink.href = `index.html?date=${encodeURIComponent(dateParam)}`;
 
     function chips(arr){
       return (arr||[]).map(n=>{
@@ -97,6 +100,11 @@
     }
 
     async function load() {
+      // No gamePk provided: guide user and stop
+      if (!gamePk) {
+        document.getElementById('status').textContent = 'ゲームが選択されていません。トップページから試合を選んでください。';
+        return;
+      }
       const loadTarget = document.getElementById('status');
       showLoading(loadTarget, true);
   // Compute basePath robustly: directory of this page without trailing slash
@@ -119,10 +127,12 @@
   };
   const res = await fetch(`${basePath}/api/games/${gamePk}`);
       if (!res.ok) return;
-      const d = await res.json();
+  const d = await res.json();
       showLoading(loadTarget, false);
       document.getElementById('title').textContent = `${d.away.team} at ${d.home.team} (${d.date})`;
       document.getElementById('status').textContent = `${d.status.detailed} (${d.status.abstract})`;
+  // Back link fallback if date not in URL
+  if (!dateParam && d.date) backLink.href = `index.html?date=${encodeURIComponent(d.date)}`;
 
   const home = d.home, away = d.away;
       document.getElementById('homeTitle').textContent = home.team;

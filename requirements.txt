@@ -4,3 +4,5 @@ httpx
 pydantic
 sqlalchemy
 python-dotenv
+PyMySQL
+cryptography

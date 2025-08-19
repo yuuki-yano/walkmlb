@@ -46,9 +46,12 @@ async def get_steps_goal_for_players(game_pk: int, side: str, db: Session = Depe
     """Compute steps from player events (hits/HR/errors) for a chosen side using player-level weights."""
     if side not in ("home", "away"):
         raise HTTPException(status_code=400, detail="side must be 'home' or 'away'")
-    from ..mlb_api import fetch_boxscore, parse_player_events
+    from ..mlb_api import get_cached_boxscore, parse_player_events
     from ..config import settings
-    box = await fetch_boxscore(game_pk)
+    box = get_cached_boxscore(game_pk)
+    if not box:
+        # Updaterが未反映の場合は一時的に404を返す（外部APIは叩かない）
+        raise HTTPException(status_code=404, detail="Boxscore not cached yet")
     players = parse_player_events(box)[side]
     # counts by event (totals)
     hits_n = sum([p.get('hits', 0) for p in players.get("hits", [])])

@@ -52,8 +52,16 @@
   <script>
     const $ = (sel) => document.querySelector(sel);
     const dateInput = $('#date');
-  const today = new Date().toISOString().slice(0,10);
-  dateInput.value = today;
+    const params = new URLSearchParams(window.location.search);
+    const qDate = params.get('date');
+    const today = new Date().toISOString().slice(0,10);
+    dateInput.value = qDate || today;
+    const setUrlDate = (d) => {
+      const url = new URL(window.location.href);
+      url.searchParams.set('date', d);
+      history.replaceState(null, '', url.toString());
+    };
+    setUrlDate(dateInput.value);
   // favorite team persistence
   const favTeam = localStorage.getItem('favTeam') || '';
   if (favTeam) $('#team').value = favTeam;
@@ -74,7 +82,7 @@
     for (const g of data.games) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td><a href="game.html?gamePk=${g.gamePk}">${g.gamePk}</a></td>
+          <td><a href="game.html?gamePk=${g.gamePk}&date=${encodeURIComponent(d)}">${g.gamePk}</a></td>
           <td>${(g.status && (g.status.detailed||g.status.abstract)) || '-'}</td>
       <td>${g.away.team}</td>
       <td>${g.away.R} / ${g.away.H} / ${g.away.E} / ${g.away.HR}</td>
@@ -112,6 +120,11 @@
 
   $('#btnImport').addEventListener('click', importDate);
   $('#btnGoal').addEventListener('click', loadGoal);
+  // Keep URL in sync when the date input changes
+  dateInput.addEventListener('change', () => {
+    setUrlDate(dateInput.value);
+    loadGames();
+  });
   $('#team').addEventListener('change', (e)=> localStorage.setItem('favTeam', e.target.value.trim()));
 
     loadGames();
