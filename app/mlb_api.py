@@ -1,6 +1,8 @@
 import datetime as dt
 from typing import Any, Dict, List, Tuple
 import httpx
+import json
+from .db import SessionLocal, BoxscoreCache, LinescoreCache, StatusCache
 
 BASE = "https://statsapi.mlb.com/api/v1"
 
@@ -19,34 +21,109 @@ async def fetch_schedule(date: dt.date) -> List[Dict[str, Any]]:
         return []
     return dates[0].get("games", [])
 
+def _get_cached_boxscore(game_pk: int):
+    db = SessionLocal()
+    try:
+        row = db.query(BoxscoreCache).filter(BoxscoreCache.game_pk == game_pk).one_or_none()
+        if row:
+            return json.loads(row.json)
+        return None
+    finally:
+        db.close()
+
+def get_cached_boxscore(game_pk: int) -> Dict[str, Any] | None:
+    """Return cached boxscore JSON if present, else None. No network calls."""
+    res = _get_cached_boxscore(game_pk)
+    return res
+
+def _set_cached_boxscore(game_pk: int, payload: Dict[str, Any]):
+    db = SessionLocal()
+    try:
+        row = db.query(BoxscoreCache).filter(BoxscoreCache.game_pk == game_pk).one_or_none()
+        data = json.dumps(payload)
+        if row:
+            row.json = data
+        else:
+            row = BoxscoreCache(game_pk=game_pk, json=data)
+            db.add(row)
+        db.commit()
+    finally:
+        db.close()
+
 async def fetch_boxscore(game_pk: int) -> Dict[str, Any]:
+    # Try local cache first
+    cached = _get_cached_boxscore(game_pk)
+    if cached:
+        return cached
+    # Otherwise fetch from MLB API and cache
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.get(f"{BASE}/game/{game_pk}/boxscore")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        _set_cached_boxscore(game_pk, data)
+        return data
 
 async def fetch_game_status(game_pk: int) -> Dict[str, str]:
-    """Return detailed and abstract status for a game from the live feed."""
-    url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        j = r.json()
+    """No TTL here; rely on updater to refresh DB every minute. If absent, fetch and store once."""
+    db = SessionLocal()
+    try:
+        row = db.query(StatusCache).filter(StatusCache.game_pk == game_pk).one_or_none()
+        if row:
+            j = json.loads(row.json)
+        else:
+            url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.get(url)
+                r.raise_for_status()
+                j = r.json()
+            payload = json.dumps(j)
+            db.add(StatusCache(game_pk=game_pk, json=payload))
+            db.commit()
+    finally:
+        db.close()
     s = j.get("gameData", {}).get("status", {})
-    return {
-        "detailed": s.get("detailedState", "Unknown"),
-        "abstract": s.get("abstractGameState", "Unknown"),
-    }
+    return {"detailed": s.get("detailedState", "Unknown"), "abstract": s.get("abstractGameState", "Unknown")}
 
 async def fetch_linescore(game_pk: int) -> Dict[str, Any]:
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.get(f"{BASE}/game/{game_pk}/linescore")
-        r.raise_for_status()
-        return r.json()
+    """No TTL here; rely on updater. If absent, fetch once and store."""
+    db = SessionLocal()
+    try:
+        row = db.query(LinescoreCache).filter(LinescoreCache.game_pk == game_pk).one_or_none()
+        if row:
+            return json.loads(row.json)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(f"{BASE}/game/{game_pk}/linescore")
+            r.raise_for_status()
+            data = r.json()
+        db.add(LinescoreCache(game_pk=game_pk, json=json.dumps(data)))
+        db.commit()
+        return data
+    finally:
+        db.close()
+
+def get_cached_status(game_pk: int) -> Dict[str, str]:
+    db = SessionLocal()
+    try:
+        row = db.query(StatusCache).filter(StatusCache.game_pk == game_pk).one_or_none()
+        if not row:
+            return {"detailed": "Unknown", "abstract": "Unknown"}
+        j = json.loads(row.json)
+        s = j.get("gameData", {}).get("status", {})
+        return {"detailed": s.get("detailedState", "Unknown"), "abstract": s.get("abstractGameState", "Unknown")}
+    finally:
+        db.close()
+
+def get_cached_linescore(game_pk: int) -> Dict[str, Any]:
+    db = SessionLocal()
+    try:
+        row = db.query(LinescoreCache).filter(LinescoreCache.game_pk == game_pk).one_or_none()
+        return json.loads(row.json) if row else {"innings": [], "teams": {"home": {"runs": 0}, "away": {"runs": 0}}}
+    finally:
+        db.close()
 
 
 def extract_game_summary(game: Dict[str, Any]) -> Tuple[int, str, str, dt.date]:
-    game_pk = game.get("gamePk")
+    game_pk = int(game.get("gamePk") or 0)
     home_team = game.get("teams", {}).get("home", {}).get("team", {}).get("name", "")
     away_team = game.get("teams", {}).get("away", {}).get("team", {}).get("name", "")
     game_date = dt.date.fromisoformat(game.get("gameDate", "1970-01-01T00:00:00Z")[:10])

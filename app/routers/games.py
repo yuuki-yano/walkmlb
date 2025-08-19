@@ -3,11 +3,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..db import SessionLocal, Game, BatterStat
-from ..mlb_api import fetch_boxscore, fetch_game_status, parse_boxscore_totals, parse_player_events, fetch_linescore
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from ..db import SessionLocal, Game, BatterStat
-from ..mlb_api import fetch_boxscore, fetch_game_status, parse_boxscore_totals, parse_player_events
+from ..mlb_api import fetch_boxscore, parse_boxscore_totals, parse_player_events
+from ..mlb_api import get_cached_status, get_cached_linescore, get_cached_boxscore, fetch_game_status, fetch_linescore
 
 router = APIRouter()
 
@@ -29,10 +26,12 @@ async def list_games(date: str, team: Optional[str] = None, db: Session = Depend
         q = q.filter((Game.home_team == team) | (Game.away_team == team))
     items = []
     for g in q.all():
-        try:
-            status = await fetch_game_status(g.game_pk)
-        except Exception:
-            status = {"abstract": "Unknown", "detailed": "Unknown"}
+        status = get_cached_status(g.game_pk)
+        if (status.get("detailed") == "Unknown" and status.get("abstract") == "Unknown"):
+            try:
+                status = await fetch_game_status(g.game_pk)
+            except Exception:
+                pass
         items.append({
             "gamePk": g.game_pk,
             "date": g.date.isoformat(),
@@ -68,11 +67,24 @@ async def game_detail(game_pk: int, db: Session = Depends(get_db)):
     g = db.query(Game).filter(Game.game_pk == game_pk).one_or_none()
     if not g:
         raise HTTPException(status_code=404, detail="Game not found")
-    box = await fetch_boxscore(game_pk)
+    box = get_cached_boxscore(game_pk)
+    if not box:
+        box = await fetch_boxscore(game_pk)
     totals = parse_boxscore_totals(box)
     players = parse_player_events(box)
-    status = await fetch_game_status(game_pk)
-    ls = await fetch_linescore(game_pk)
+    status = get_cached_status(game_pk)
+    if (status.get("detailed") == "Unknown" and status.get("abstract") == "Unknown"):
+        try:
+            status = await fetch_game_status(game_pk)
+        except Exception:
+            pass
+    ls = get_cached_linescore(game_pk)
+    # If innings are missing/empty, fetch once and cache so scoreboard shows up
+    if not ls.get("innings"):
+        try:
+            ls = await fetch_linescore(game_pk)
+        except Exception:
+            pass
     scoreboard = {
         "innings": [
             {

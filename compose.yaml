@@ -1,5 +1,24 @@
 version: "3.8"
 services:
+  db:
+    image: mysql:8.0
+    container_name: walkmlb_db
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: walkmlb
+      MYSQL_USER: walk
+      MYSQL_PASSWORD: walk
+      TZ: Asia/Tokyo
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   api:
     build:
       context: .
@@ -12,7 +31,16 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      DATABASE_URL: mysql+pymysql://walk:walk@db:3306/walkmlb?charset=utf8mb4
+      TZ: Asia/Tokyo
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
       - .:/app:rw
       - /app/.venv
     command: ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+volumes:
+  db-data:

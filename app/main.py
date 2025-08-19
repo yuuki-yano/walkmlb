@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from .routers import importer, games, steps
+import asyncio
+from .updater import run_scheduler
 from .db import init_db
 from .config import settings
 
@@ -30,3 +32,6 @@ app.mount("/", StaticFiles(directory="static", html=True), name="static")
 @app.on_event("startup")
 def on_startup():
     init_db()
+    # Launch background updater
+    loop = asyncio.get_event_loop()
+    loop.create_task(run_scheduler())
