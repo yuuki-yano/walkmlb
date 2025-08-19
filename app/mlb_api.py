@@ -63,6 +63,15 @@ async def fetch_boxscore(game_pk: int) -> Dict[str, Any]:
         _set_cached_boxscore(game_pk, data)
         return data
 
+async def refresh_boxscore(game_pk: int) -> Dict[str, Any]:
+    """Always fetch boxscore from MLB API and overwrite cache."""
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.get(f"{BASE}/game/{game_pk}/boxscore")
+        r.raise_for_status()
+        data = r.json()
+    _set_cached_boxscore(game_pk, data)
+    return data
+
 async def fetch_game_status(game_pk: int) -> Dict[str, str]:
     """No TTL here; rely on updater to refresh DB every minute. If absent, fetch and store once."""
     db = SessionLocal()
