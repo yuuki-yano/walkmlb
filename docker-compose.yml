@@ -1,0 +1,32 @@
+version: '3.9'
+services:
+  db:
+    image: mysql:8.0
+    container_name: walkmlb-mysql8
+    environment:
+      MYSQL_DATABASE: walkmlb
+      MYSQL_ROOT_PASSWORD: example
+      MYSQL_USER: walk
+      MYSQL_PASSWORD: walkpass
+    ports:
+      - "3308:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - dbdata:/var/lib/mysql
+  api:
+    build: .
+    container_name: walkmlb-api
+    environment:
+      DATABASE_URL: mysql+pymysql://walk:walkpass@db:3306/walkmlb
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  dbdata:
+    name: walkmlb-mysql8-data

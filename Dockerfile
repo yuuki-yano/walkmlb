@@ -1,4 +1,12 @@
 # syntax=docker/dockerfile:1
+FROM node:20-alpine AS webbuild
+WORKDIR /web
+COPY web/package.json ./
+COPY web/package-lock.json ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
+COPY web ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -20,6 +28,9 @@ COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && pip install -r requirements.txt && pip install uvicorn
 
 COPY . .
+
+# Copy built SPA into image so FastAPI can serve it if present
+COPY --from=webbuild /web/dist /app/web/dist
 
 EXPOSE 8000
 

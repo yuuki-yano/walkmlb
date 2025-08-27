@@ -80,3 +80,6 @@ docker-compose.override.yml
 
 # Temp files
 *.tmp
+
+# Node modules (if using Node.js in the project)
+node_modules/
