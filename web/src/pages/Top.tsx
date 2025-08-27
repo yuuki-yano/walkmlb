@@ -45,6 +45,8 @@ export default function Top() {
     side: 'home'|'away';
     opponent: string;
     label: string; // e.g., vs OPP or @ OPP
+  base: number;
+  contrib: number; // per-player contribution sum (without base)
     total: number;
     list: Array<{ name: string, steps: number }>;
   }>>([]);
@@ -149,11 +151,12 @@ export default function Top() {
     add(j.players.homeRuns || [], settings.perHR, 'homeRuns');
     add(j.players.errors || [], settings.perError, 'errors');
     add(j.players.strikeOuts || [], settings.perSO, 'strikeOuts');
-    const list = Object.entries(byName).map(([name, steps])=>({ name, steps })).sort((a,b)=> b.steps - a.steps);
-    const total = Math.max(0, Math.trunc(settings.base + list.reduce((s,x)=> s + x.steps, 0)));
+  const list = Object.entries(byName).map(([name, steps])=>({ name, steps })).sort((a,b)=> b.steps - a.steps);
+  const contrib = list.reduce((s,x)=> s + x.steps, 0);
+  const total = Math.max(0, Math.trunc(settings.base + contrib));
     const opponent = side === 'home' ? game.away.team : game.home.team;
     const label = side === 'home' ? `vs ${opponent}` : `@ ${opponent}`;
-    return { gamePk: game.gamePk, side, opponent, label, total, list };
+  return { gamePk: game.gamePk, side, opponent, label, base: settings.base, contrib, total, list };
   }
 
   // Auto-calc per-player results for the selected team (home or away)
@@ -178,8 +181,11 @@ export default function Top() {
   // Keep the big circle in sync: if team is selected and we have results, show their sum; otherwise show goal
   useEffect(()=>{
     if (team && playerResults.length > 0) {
-      const sum = playerResults.reduce((s, r) => s + (r.total || 0), 0);
-      setSteps(sum);
+  // Apply base only once across all games
+  const baseOnce = playerResults[0]?.base ?? 0;
+  const contribSum = playerResults.reduce((s, r) => s + (r.contrib || 0), 0);
+  const sumOnce = Math.max(0, Math.trunc(baseOnce + contribSum));
+  setSteps(sumOnce);
     } else {
       // recalc goal for non-team or empty results
       (async()=>{ try { await calcGoal(); } catch {} })();
