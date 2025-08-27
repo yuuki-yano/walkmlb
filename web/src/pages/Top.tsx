@@ -40,6 +40,7 @@ export default function Top() {
   const [team, setTeam] = useState<string>(()=> localStorage.getItem('favTeam') || '');
   const [steps, setSteps] = useState<number | null>(null);
   const [games, setGames] = useState<any[]>([]);
+  const [serverDefaults, setServerDefaults] = useState<{ base: number; perHit: number; perHR: number; perError: number; perSO: number } | null>(null);
   const [playerResults, setPlayerResults] = useState<Array<{
     gamePk: number;
     side: 'home'|'away';
@@ -57,6 +58,17 @@ export default function Top() {
       // Reuse backend calendar teams endpoint
       const j = await fetchJSON('/api/calendar/teams');
       setTeams(j.teams || []);
+    } catch {}
+    // Fetch server default settings once
+    try {
+      const s = await fetchJSON('/api/steps/settings');
+      setServerDefaults({
+        base: Number(s.base ?? 6000),
+        perHit: Number(s.player?.perHit ?? -100),
+        perHR: Number(s.player?.perHR ?? -300),
+        perError: Number(s.player?.perError ?? 50),
+        perSO: Number(s.player?.perSO ?? 100),
+      });
     } catch {}
   })();},[]);
 
@@ -101,25 +113,22 @@ export default function Top() {
       const global = JSON.parse(localStorage.getItem('playerSettings')||'null');
       const dailyMap = JSON.parse(localStorage.getItem('playerSettingsDaily')||'null') || {};
       const daily = (date && team && dailyMap?.[date]?.[team]) || null;
-      if (global && global.perPlayer) {
-        // merge overrides: daily wins over global
-        const mergedOverrides: Record<string, any> = { ...(global.overrides||{}) };
-        if (daily && daily.overrides) {
-          for (const [name, vals] of Object.entries(daily.overrides)) {
-            mergedOverrides[name] = { ...(mergedOverrides[name]||{}), ...(vals as any) };
-          }
+      // base and per-weights: prefer global overrides if present; else server defaults; else hard-coded fallback
+      const baseVal = Number((global && global.base) ?? serverDefaults?.base ?? 6000);
+      const perHit = Number((global && global.perPlayer?.perHit) ?? serverDefaults?.perHit ?? -100);
+      const perHR = Number((global && global.perPlayer?.perHR) ?? serverDefaults?.perHR ?? -300);
+      const perError = Number((global && global.perPlayer?.perError) ?? serverDefaults?.perError ?? 50);
+      const perSO = Number((global && global.perPlayer?.perSO) ?? serverDefaults?.perSO ?? 100);
+      // merge overrides: daily wins over global
+      const mergedOverrides: Record<string, any> = { ...(global?.overrides||{}) };
+      if (daily && daily.overrides) {
+        for (const [name, vals] of Object.entries(daily.overrides)) {
+          mergedOverrides[name] = { ...(mergedOverrides[name]||{}), ...(vals as any) };
         }
-        return {
-          base: Number(global.base ?? 6000),
-          perHit: Number(global.perPlayer.perHit ?? -100),
-          perHR: Number(global.perPlayer.perHR ?? -300),
-          perError: Number(global.perPlayer.perError ?? 50),
-          perSO: Number(global.perPlayer.perSO ?? 100),
-          overrides: mergedOverrides,
-        };
       }
+      return { base: baseVal, perHit, perHR, perError, perSO, overrides: mergedOverrides };
     } catch {}
-    return { base: 6000, perHit: -100, perHR: -300, perError: 50, perSO: 100, overrides: {} };
+    return { base: serverDefaults?.base ?? 6000, perHit: serverDefaults?.perHit ?? -100, perHR: serverDefaults?.perHR ?? -300, perError: serverDefaults?.perError ?? 50, perSO: serverDefaults?.perSO ?? 100, overrides: {} };
   }
 
   async function calcPerPlayerForGame(game: any, side: 'home'|'away') {
@@ -176,7 +185,7 @@ export default function Top() {
         setPlayerResults([]);
       }
     })();
-  }, [games, team]);
+  }, [games, team, serverDefaults]);
 
   // Keep the big circle in sync: if team is selected and we have results, show their sum; otherwise show goal
   useEffect(()=>{
