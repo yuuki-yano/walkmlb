@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WalkMLB: Calendar</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans JP", sans-serif; margin: 1rem 2rem; }
+    .row { display:flex; gap:.5rem; align-items:center; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+    .cell { border: 1px solid #ddd; padding: .4rem; min-height: 120px; background: #fff; display:flex; flex-direction: column; }
+    .cell .date { font-weight: 600; margin-bottom: .25rem; font-size: .9rem; }
+    .game { font-size: .85rem; margin-bottom: .25rem; }
+    .muted { color:#666; }
+    .weekdays { display:grid; grid-template-columns: repeat(7, 1fr); gap:6px; margin:.5rem 0; }
+    .weekdays div { text-align:center; font-weight:600; color:#555; }
+  .hidden { display: none !important; }
+  .loading { margin:.5rem 0; color:#555; display:flex; align-items:center; gap:.5rem; }
+  .spinner { width:20px; height:20px; border:3px solid #ccc; border-top-color:#09f; border-radius:50%; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 768px) {
+      body { margin: 1rem; }
+      .cell { min-height: auto; }
+    }
+  </style>
+</head>
+<body>
+  <a href="index.html">← Back</a>
+  <h1>カレンダー</h1>
+  <div class="row">
+    <label>チーム: 
+      <select id="team"></select>
+    </label>
+    <label>月: <input id="month" type="month"></label>
+    <label>時間: 
+      <select id="tz">
+        <option value="JP" selected>日本時間</option>
+        <option value="Local">現地時間</option>
+      </select>
+    </label>
+    <button id="load">表示</button>
+  </div>
+
+  <div id="weekdays" class="weekdays hidden">
+    <div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div>
+  </div>
+  <div id="loading" class="loading hidden"><span class="spinner"></span> <span id="progressText">読み込み中…</span></div>
+  <div id="calendar" class="grid"></div>
+
+  <script>
+    const $ = (s)=>document.querySelector(s);
+    const base = new URL('.', window.location.href).pathname.replace(/\/$/, '');
+  const qs = new URLSearchParams(location.search);
+  const teamSel = $('#team');
+    const monthInput = $('#month');
+    const tzSel = $('#tz');
+  const initTeam = qs.get('team') || '';
+    monthInput.value = qs.get('month') || new Date().toISOString().slice(0,7);
+    tzSel.value = qs.get('tz') || 'JP';
+
+    async function loadTeams() {
+      const res = await fetch(`${base}/api/calendar/teams`);
+      const data = await res.json();
+      const teams = data.teams || [];
+      teamSel.innerHTML = `<option value="">(選択してください)</option>` + teams.map(t => `<option value="${t}">${t}</option>`).join('');
+      if (initTeam) teamSel.value = initTeam;
+    }
+
+    function setLoading(on, text) {
+      const ld = document.getElementById('loading');
+      const pt = document.getElementById('progressText');
+      const cal = document.getElementById('calendar');
+      const wd = document.getElementById('weekdays');
+      if (on) {
+        ld.classList.remove('hidden');
+        if (text) pt.textContent = text; else pt.textContent = '読み込み中…';
+        cal.classList.add('hidden');
+        wd.classList.add('hidden');
+      } else {
+        ld.classList.add('hidden');
+        cal.classList.remove('hidden');
+        wd.classList.remove('hidden');
+      }
+    }
+
+    $('#load').addEventListener('click', async () => {
+      const team = teamSel.value.trim();
+      const month = monthInput.value;
+      const tz = tzSel.value;
+      const url = `${base}/api/calendar?team=${encodeURIComponent(team)}&month=${encodeURIComponent(month)}&tz=${encodeURIComponent(tz)}&fill=1`;
+      setLoading(true, '不足日を確認中…');
+      try {
+        // Step 1: check missing days for the month
+  const missRes = await fetch(`${base}/api/calendar/missing?month=${encodeURIComponent(month)}&team=${encodeURIComponent(team)}`);
+        const miss = await missRes.json();
+        const missing = miss.missing || [];
+        if (missing.length) {
+          // Fill one-by-one with progress
+          let done = 0;
+          for (const d of missing) {
+            setLoading(true, `取得中 ${done + 1} / ${missing.length} (${d})`);
+            await fetch(`${base}/api/updater/run-once?date=${encodeURIComponent(d)}`);
+            // wait a little for scheduler to persist
+            await new Promise(r => setTimeout(r, 800));
+            done++;
+          }
+        }
+        setLoading(true, '表示データを取得中…');
+        const res2 = await fetch(url);
+        const data2 = await res2.json();
+        render(data2, tz);
+        setLoading(false);
+      } catch (e) {
+        setLoading(false);
+        alert('読み込みに失敗しました');
+      }
+      const u = new URL(window.location.href);
+      u.searchParams.set('team', team);
+      u.searchParams.set('month', month);
+      u.searchParams.set('tz', tz);
+      history.replaceState(null, '', u);
+    });
+
+    function render(data, tz) {
+      const days = data.days || [];
+      const host = $('#calendar');
+      host.innerHTML = '';
+      if (!days.length) return;
+
+      // Determine leading blanks to align 1st day to weekday
+      const first = new Date(days[0].date + 'T00:00:00');
+      let blanks = first.getDay(); // 0 (Sun) - 6 (Sat)
+      for (let i = 0; i < blanks; i++) {
+        const div = document.createElement('div');
+        div.className = 'cell muted';
+        host.appendChild(div);
+      }
+
+      for (const d of days) {
+        const div = document.createElement('div');
+        div.className = 'cell';
+        const dateEl = document.createElement('div');
+        dateEl.className = 'date';
+        dateEl.textContent = d.date.split('-')[2].replace(/^0/, '');
+        div.appendChild(dateEl);
+
+        if ((d.games||[]).length) {
+          for (const g of d.games) {
+            const time = (tz === 'Local' ? g.timeLocal : g.timeJP) || '-';
+            const status = g.status && (g.status.detailed || g.status.abstract) || '-';
+            const score = `${g.away.team} ${g.away.R}/${g.away.H}/${g.away.E}/${g.away.HR} @ ${g.home.team} ${g.home.R}/${g.home.H}/${g.home.E}/${g.home.HR}`;
+            const item = document.createElement('div');
+            item.className = 'game';
+            item.innerHTML = `${time} <span class="muted">${status}</span><br><a href="game.html?gamePk=${g.gamePk}">${score}</a>`;
+            div.appendChild(item);
+          }
+        } else {
+          const empty = document.createElement('div');
+          empty.className = 'game muted';
+          empty.textContent = '試合なし';
+          div.appendChild(empty);
+        }
+
+        host.appendChild(div);
+      }
+    }
+
+  // bootstrap
+  loadTeams();
+  </script>
+</body>
+</html>

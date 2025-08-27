@@ -211,6 +211,18 @@
         document.getElementById('wErr').value = s.player.perError;
         document.getElementById('wSO').value = s.player.perSO;
       } catch {}
+      // Apply local overrides saved by SPA Settings if present
+      try {
+        const local = JSON.parse(localStorage.getItem('playerSettings')||'null');
+        if (local && local.perPlayer) {
+          defaults = {hit:local.perPlayer.perHit, hr:local.perPlayer.perHR, err:local.perPlayer.perError, so:local.perPlayer.perSO, base:local.base||defaults.base};
+          document.getElementById('wBase').value = defaults.base;
+          document.getElementById('wHit').value = defaults.hit;
+          document.getElementById('wHR').value = defaults.hr;
+          document.getElementById('wErr').value = defaults.err;
+          document.getElementById('wSO').value = defaults.so;
+        }
+      } catch {}
 
       renderEditable('homeHitWeights', home.hitsPlayers, defaults.hit);
       renderEditable('homeHRWeights', home.homeRunsPlayers, defaults.hr);

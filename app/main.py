@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from .routers import importer, games, steps
 from .routers import admin
+from .routers import calendar as calendar_router
 import asyncio
 from .updater import run_scheduler
 from .db import init_db
@@ -26,10 +28,17 @@ app.include_router(importer.router, prefix=api_prefix, tags=["import"])
 app.include_router(games.router, prefix=api_prefix, tags=["games"])
 app.include_router(steps.router, prefix=api_prefix, tags=["steps"])
 app.include_router(admin.router, prefix=api_prefix, tags=["admin"])
+app.include_router(calendar_router.router, prefix=api_prefix, tags=["calendar"])
 
-# Static frontend mounted at base path
-# Static frontend mounted at app root (root_pathが外側のサブパスを表現)
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+"""
+Static frontend
+- If React+Vite build exists at web/dist, serve it at '/'
+- Fallback to existing 'static' folder otherwise
+"""
+if os.path.isdir("web/dist"):
+    app.mount("/", StaticFiles(directory="web/dist", html=True), name="spa")
+else:
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 @app.on_event("startup")
 def on_startup():
