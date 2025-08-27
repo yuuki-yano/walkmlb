@@ -41,6 +41,8 @@ export default function Top() {
   const [steps, setSteps] = useState<number | null>(null);
   const [games, setGames] = useState<any[]>([]);
   const [serverDefaults, setServerDefaults] = useState<{ base: number; perHit: number; perHR: number; perError: number; perSO: number } | null>(null);
+  const [loadingGames, setLoadingGames] = useState(false);
+  const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [playerResults, setPlayerResults] = useState<Array<{
     gamePk: number;
     side: 'home'|'away';
@@ -97,16 +99,21 @@ export default function Top() {
   }
 
   async function loadGames() {
-    const params = new URLSearchParams({ date });
-    if (team) params.append('team', team);
-    const j = await fetchJSON('/api/games?' + params.toString());
-    setGames(j.games || []);
+    setLoadingGames(true);
+    try {
+      const params = new URLSearchParams({ date });
+      if (team) params.append('team', team);
+      const j = await fetchJSON('/api/games?' + params.toString());
+      setGames(j.games || []);
+    } finally {
+      setLoadingGames(false);
+    }
   }
 
   useEffect(()=>{ loadGames(); }, [date, team]);
 
-  // Auto-calc goal whenever date/team changes
-  useEffect(()=>{ (async()=>{ try { await calcGoal(); } catch {} })(); }, [date, team]);
+  // Auto-calc goal whenever date changes and no team selected
+  useEffect(()=>{ (async()=>{ if (!team) { try { await calcGoal(); } catch {} } })(); }, [date, team]);
 
   function readLocalSettings() {
     try {
@@ -176,6 +183,7 @@ export default function Top() {
         // pick games of the selected team (API already filtered, but double-check)
         const targetGames = (games || []).filter(g => g?.home?.team === team || g?.away?.team === team);
         if (targetGames.length === 0) { setPlayerResults([]); return; }
+        setLoadingPlayers(true);
         const results = await Promise.all(targetGames.map(async g => {
           const side: 'home'|'away' = g.home.team === team ? 'home' : 'away';
           return calcPerPlayerForGame(g, side);
@@ -183,23 +191,20 @@ export default function Top() {
         setPlayerResults(results);
       } catch (e) {
         setPlayerResults([]);
-      }
+      } finally { setLoadingPlayers(false); }
     })();
   }, [games, team, serverDefaults]);
 
-  // Keep the big circle in sync: if team is selected and we have results, show their sum; otherwise show goal
-  useEffect(()=>{
-    if (team && playerResults.length > 0) {
-  // Apply base only once across all games
-  const baseOnce = playerResults[0]?.base ?? 0;
-  const contribSum = playerResults.reduce((s, r) => s + (r.contrib || 0), 0);
-  const sumOnce = Math.max(0, Math.trunc(baseOnce + contribSum));
-  setSteps(sumOnce);
-    } else {
-      // recalc goal for non-team or empty results
-      (async()=>{ try { await calcGoal(); } catch {} })();
+  // Derived displayed steps: if team selected, use computed combined; else use general goal
+  const displayedSteps = (() => {
+    if (team) {
+      if (playerResults.length === 0) return null; // loading or no games
+      const baseOnce = playerResults[0]?.base ?? 0;
+      const contribSum = playerResults.reduce((s, r) => s + (r.contrib || 0), 0);
+      return Math.max(0, Math.trunc(baseOnce + contribSum));
     }
-  }, [team, playerResults]);
+    return steps;
+  })();
 
   return (
     <>
@@ -216,7 +221,7 @@ export default function Top() {
           </div>
           <div className="center">
             <div className="circle">
-              <div className="steps">{steps!==null? steps.toLocaleString() : '—'}</div>
+              <div className="steps">{displayedSteps!==null? displayedSteps.toLocaleString() : '—'}</div>
             </div>
           </div>
           <div className="center small">歩</div>
@@ -230,13 +235,13 @@ export default function Top() {
             <p className="small">チームを選択してください。</p>
           ) : games.length === 0 ? (
             <p className="small">試合がありません</p>
-          ) : playerResults.length === 0 ? (
+          ) : (loadingGames || loadingPlayers || playerResults.length === 0) ? (
             <p className="small">計算中…</p>
           ) : (
             <>
               {/* Combined total to match the circle */}
               <div className="row" style={{marginBottom:8}}>
-                <b>合計:</b> <span className="steps" style={{fontWeight:800, marginLeft:6}}>{steps!==null? steps.toLocaleString(): '—'}</span> 歩
+                <b>合計:</b> <span className="steps" style={{fontWeight:800, marginLeft:6}}>{displayedSteps!==null? displayedSteps.toLocaleString(): '—'}</span> 歩
               </div>
               {playerResults.map(r=> (
                 <div key={r.gamePk} style={{marginTop:12}}>
