@@ -20,4 +20,7 @@ class Settings(BaseModel):
     walk_per_error_player: int = int(os.getenv("WALK_PER_ERROR_PLAYER", 50))
     walk_per_so_player: int = int(os.getenv("WALK_PER_SO_PLAYER", 100))
 
+    # Simple admin authentication token for protected endpoints
+    admin_token: str | None = os.getenv("ADMIN_TOKEN") or None
+
 settings = Settings()
