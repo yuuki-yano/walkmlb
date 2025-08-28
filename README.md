@@ -7,11 +7,19 @@ FastAPI + SQLite のシンプルなWebアプリです。MLB Stats APIから試�
 - 保存データの参照
 - 指定日の目標歩数を計算（任意でチーム名でフィルタ）
 - 簡易フロントエンド（/ でアクセス）
+ - 管理者用：月単位のバックフィル（過去試合のまとめ取得・保存）
 
 ## エンドポイント
 - POST /api/import?date=YYYY-MM-DD
 - GET  /api/games?date=YYYY-MM-DD
 - GET  /api/steps/goal?date=YYYY-MM-DD[&team=TEAM_NAME]
+ - 管理者: 
+	 - GET/POST /api/updater/run-once?date=YYYY-MM-DD（1日分の取得をバックグラウンド実行）
+	 - POST /api/updater/backfill-month?month=YYYY-MM（該当月の全日を順に取得）
+	 - GET /api/updater/status（実行中/最終更新の確認）
+
+管理者エンドポイントは環境変数 ADMIN_TOKEN を設定すると認証が必要になります。
+リクエスト時に `Authorization: Bearer <ADMIN_TOKEN>` を付与してください。
 
 ## ステップ目標のデフォルト計算式
 - base 6000 歩
@@ -37,3 +45,4 @@ WALK_PER_ERROR_PLAYER=50
 2) ビルド＆起動（ホットリロード対応）
 3) ブラウザで http://localhost:8000/
 	- トップページから日付を選び「インポート」→「目標歩数」
+	- カレンダー（/calendar.html）右上の「管理者: 月次バックフィル」から ADMIN_TOKEN を入力して月次取得をトリガできます

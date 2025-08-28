@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Header
 from datetime import date as Date, timedelta
 from typing import Dict, Any
 import json
@@ -10,6 +10,7 @@ from sqlalchemy import or_, and_
 from ..db import SessionLocal, Game, StatusCache
 from ..mlb_api import get_cached_status
 from ..updater import update_for_date
+from ..config import settings
 
 router = APIRouter()
 
@@ -34,18 +35,27 @@ def _month_range(month: str) -> tuple[Date, Date]:
 async def get_calendar(team: str = Query(..., description="Team name contains"),
                  month: str = Query(..., description="YYYY-MM"),
                  tz: str = Query("JP", description="JP or Local"),
-                 fill: int = Query(1, description="1: fetch & save missing days in month, 0: no fetch")) -> Dict[str, Any]:
+                 fill: int = Query(0, description="Deprecated. Admin-only if enabled."),
+                 authorization: str | None = Header(None)) -> Dict[str, Any]:
     start, end = _month_range(month)
     db: Session = SessionLocal()
     try:
-        # Optionally fill missing dates (no rows at all on that date)
+        # Optionally fill missing dates (admin only). This behavior was previously default on; now restricted.
         if fill:
-            cur = start
-            while cur <= end:
-                exists = db.query(Game.id).filter(Game.date == cur).limit(1).one_or_none()
-                if not exists:
-                    await update_for_date(cur)
-                cur += timedelta(days=1)
+            allowed = True
+            if settings.admin_token:
+                # Simple bearer token check
+                token = None
+                if authorization:
+                    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else authorization.strip()
+                allowed = (token == settings.admin_token)
+            if allowed:
+                cur = start
+                while cur <= end:
+                    exists = db.query(Game.id).filter(Game.date == cur).limit(1).one_or_none()
+                    if not exists:
+                        await update_for_date(cur)
+                    cur += timedelta(days=1)
 
         # Re-query after optional fill
         q = db.query(Game).filter(and_(Game.date >= start, Game.date <= end))

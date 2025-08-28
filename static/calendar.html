@@ -39,6 +39,14 @@
       </select>
     </label>
     <button id="load">表示</button>
+    <details style="margin-left:1rem;">
+      <summary>管理者: 月次バックフィル</summary>
+      <div class="row" style="margin-top:.5rem;">
+        <label>ADMIN_TOKEN: <input id="adminToken" type="password" placeholder="サーバのADMIN_TOKEN" style="min-width:220px;"></label>
+        <button id="backfill">この月を取得して保存</button>
+      </div>
+      <p class="muted small">サーバに設定された ADMIN_TOKEN が必要です。既存データは上書き更新されます。</p>
+    </details>
   </div>
 
   <div id="weekdays" class="weekdays hidden">
@@ -54,9 +62,11 @@
   const teamSel = $('#team');
     const monthInput = $('#month');
     const tzSel = $('#tz');
+  const adminTokenInput = $('#adminToken');
   const initTeam = qs.get('team') || '';
     monthInput.value = qs.get('month') || new Date().toISOString().slice(0,7);
     tzSel.value = qs.get('tz') || 'JP';
+  adminTokenInput.value = localStorage.getItem('walkmlb_admin_token') || '';
 
     async function loadTeams() {
       const res = await fetch(`${base}/api/calendar/teams`);
@@ -99,7 +109,10 @@
           let done = 0;
           for (const d of missing) {
             setLoading(true, `取得中 ${done + 1} / ${missing.length} (${d})`);
-            await fetch(`${base}/api/updater/run-once?date=${encodeURIComponent(d)}`);
+            const headers = {};
+            const t = (localStorage.getItem('walkmlb_admin_token') || '').trim();
+            if (t) headers['Authorization'] = `Bearer ${t}`;
+            await fetch(`${base}/api/updater/run-once?date=${encodeURIComponent(d)}`, { headers });
             // wait a little for scheduler to persist
             await new Promise(r => setTimeout(r, 800));
             done++;
@@ -119,6 +132,46 @@
       u.searchParams.set('month', month);
       u.searchParams.set('tz', tz);
       history.replaceState(null, '', u);
+    });
+
+    $('#backfill').addEventListener('click', async ()=>{
+      const month = monthInput.value;
+      const t = adminTokenInput.value.trim();
+      if (!month) { alert('月を選択してください'); return; }
+      if (!t) { alert('ADMIN_TOKEN を入力してください'); return; }
+      localStorage.setItem('walkmlb_admin_token', t);
+      try {
+        setLoading(true, '月次バックフィルを開始…');
+        const res = await fetch(`${base}/api/updater/backfill-month?month=${encodeURIComponent(month)}`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${t}` }
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        setLoading(true, 'バックグラウンドで実行中… ステータスを監視します');
+        // Poll status for a short while
+        const start = Date.now();
+        const maxMs = 60 * 1000; // 1 min
+        const poll = async () => {
+          const r = await fetch(`${base}/api/updater/status`, { headers: { 'Authorization': `Bearer ${t}` }});
+          if (r.ok) {
+            const s = await r.json();
+            const msg = s.isRunning ? '実行中…' : '完了';
+            setLoading(true, `バックフィル ${msg} 更新ゲーム: ${s.lastUpdatedGames ?? 0}`);
+            if (!s.isRunning) return true;
+          }
+          return false;
+        };
+        let done = false;
+        while (!done && (Date.now() - start) < maxMs) {
+          done = await poll();
+          if (!done) await new Promise(r => setTimeout(r, 1000));
+        }
+        setLoading(false);
+        alert('バックフィル要求を受け付けました。表示を再取得してください。');
+      } catch (e) {
+        setLoading(false);
+        alert('バックフィルの実行に失敗しました');
+      }
     });
 
     function render(data, tz) {

@@ -22,11 +22,12 @@ services:
     container_name: walkmlb-api
     environment:
       DATABASE_URL: mysql+pymysql://walk:walkpass@db:3306/walkmlb
+      # Set an admin token to protect admin-only endpoints (optional but recommended)
+      ADMIN_TOKEN: "change-me"
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      - db
 volumes:
   dbdata:
     name: walkmlb-mysql8-data
