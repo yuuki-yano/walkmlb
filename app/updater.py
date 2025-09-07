@@ -122,9 +122,9 @@ async def run_scheduler():
                         st = (g.get("status", {}) or {})
                         abstract = (st.get("abstractGameState") or "").lower()
                         detailed = (st.get("detailedState") or "").lower()
-                        if abstract == "live" or "in progress" in detailed or "live" in detailed:
-                            has_live = True
-                            break
+                        # if abstract == "live" or "in progress" in detailed or "live" in detailed:
+                        #     has_live = True
+                        #     break
                 except Exception:
                     pass
         except Exception:
@@ -194,11 +194,11 @@ async def _update_active_games() -> int:
                 j = _json.loads(row.json)
             except Exception:
                 continue
-            s = j.get("gameData", {}).get("status", {})
-            detailed = (s.get("detailedState") or "").lower()
-            abstract = (s.get("abstractGameState") or "").lower()
-            if not (abstract == "live" or "in progress" in detailed or "live" in detailed):
-                continue
+            # s = j.get("gameData", {}).get("status", {})
+            # detailed = (s.get("detailedState") or "").lower()
+            # abstract = (s.get("abstractGameState") or "").lower()
+            # if not (abstract == "live" or "in progress" in detailed or "live" in detailed):
+            #     continue
             game_pk = row.game_pk
             # Determine date for DB upsert: prefer existing Game row; else derive from status datetime; default to 'today' in update_tz
             tz = zoneinfo.ZoneInfo(settings.update_tz)
