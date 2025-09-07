@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal, Game, BatterStat
 from ..mlb_api import fetch_boxscore, parse_boxscore_totals, parse_player_events
 from ..mlb_api import get_cached_status, get_cached_linescore, get_cached_boxscore, fetch_game_status, fetch_linescore
+from ..db import StatusCache
+import json as _json
 
 router = APIRouter()
 
@@ -120,3 +122,74 @@ async def game_detail(game_pk: int, db: Session = Depends(get_db)):
     "status": status,
     "scoreboard": scoreboard,
     }
+
+@router.get("/games/{game_pk}/plate-appearances")
+async def game_plate_appearances(game_pk: int, side: str, db: Session = Depends(get_db)):
+    if side not in ("home", "away"):
+        raise HTTPException(status_code=400, detail="side must be 'home' or 'away'")
+    # Get raw live feed JSON from status_cache or fetch if missing
+    row = db.query(StatusCache).filter(StatusCache.game_pk == game_pk).one_or_none()
+    feed = None
+    if row:
+        try:
+            feed = _json.loads(row.json)
+        except Exception:
+            feed = None
+    if not feed:
+        # Fallback: fetch live feed once
+        import httpx
+        try:
+            url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                r = await client.get(url)
+                r.raise_for_status()
+                feed = r.json()
+            # Save to cache
+            try:
+                payload = _json.dumps(feed)
+                if row:
+                    row.json = payload
+                else:
+                    db.add(StatusCache(game_pk=game_pk, json=payload))
+                db.commit()
+            except Exception:
+                pass
+        except Exception:
+            raise HTTPException(status_code=404, detail="live feed not available")
+
+    all_plays = (feed.get("liveData", {}) or {}).get("plays", {}).get("allPlays", [])
+    game_data = feed.get("gameData", {}) or {}
+    # Determine home/away by halfInning (top=away, bottom=home)
+    # Map player -> list[str]
+    pa_map: dict[str, list[str]] = {}
+    # Abbreviation mapping
+    mapping = {
+        "single": "1B", "double": "2B", "triple": "3B", "home_run": "HR", "home run": "HR",
+        "walk": "BB", "intent_walk": "IBB", "hit_by_pitch": "HBP", "strikeout": "K", "strikeout_double_play": "K",
+        "field_out": "OUT", "force_out": "FO", "grounded_into_double_play": "GDP", "double_play": "DP",
+        "sac_fly": "SF", "sac_bunt": "SH", "catcher_interf": "CI",
+    }
+    for p in all_plays:
+        about = p.get("about", {}) or {}
+        if not about.get("isComplete"):
+            continue
+        half = about.get("halfInning")  # 'top' or 'bottom'
+        if half not in ("top", "bottom"):
+            continue
+        play_side = "away" if half == "top" else "home"
+        if play_side != side:
+            continue
+        matchup = p.get("matchup", {}) or {}
+        batter = (matchup.get("batter", {}) or {}).get("fullName")
+        if not batter:
+            continue
+        res = p.get("result", {}) or {}
+        ev_type = (res.get("eventType") or res.get("event") or "").lower()
+        abbr = mapping.get(ev_type, None)
+        # Fallback: for unknown events skip (we could include raw for debugging)
+        if not abbr:
+            continue
+        pa_map.setdefault(batter, []).append(abbr)
+
+    players = [{"name": n, "pa": seq} for n, seq in pa_map.items()]
+    return {"gamePk": game_pk, "side": side, "players": players}
