@@ -2,6 +2,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
+from collections import deque
 from .db import SessionLocal
 from .crud import upsert_game, upsert_batter
 from .mlb_api import fetch_schedule, refresh_boxscore
@@ -20,11 +21,27 @@ LAST_UPDATED_GAMES: int = 0
 LAST_ERROR: str | None = None
 IS_RUNNING: bool = False
 
+# In-memory ring buffer for verbose updater logs (admin diagnostics)
+DETAIL_LOGS: deque[dict] = deque(maxlen=1000)
+
+def _detail(msg: str):
+    """Store a verbose log entry when settings.updater_log_detail is enabled.
+    Each entry: {ts, msg}. Also emits a debug-level logger line for standard logging handlers.
+    """
+    if not settings.updater_log_detail:
+        return
+    ts = dt.datetime.utcnow().isoformat(timespec="seconds")
+    entry = {"ts": ts, "msg": msg}
+    DETAIL_LOGS.append(entry)
+    logger.debug(f"detail: {msg}")
+
 async def update_for_date(date: dt.date, *, force: bool = False) -> int:
-    logger.info(f"updater: start update_for_date date={date}")
+    logger.info(f"updater: start update_for_date date={date} force={force}")
+    t0 = dt.datetime.utcnow()
     games = await fetch_schedule(date)
     if not games:
         logger.info("updater: no games returned from schedule")
+        _detail(f"date {date} no games in schedule")
         return 0
     updated = 0
     async with httpx.AsyncClient(timeout=59.0) as client:
@@ -38,7 +55,9 @@ async def update_for_date(date: dt.date, *, force: bool = False) -> int:
             status_state = await _refresh_and_get_status_state(client, game_pk)
             # Skip updates if game is Final or later (unless force=True)
             if (not force) and status_state == "final":
+                _detail(f"date {date} game {game_pk} skip (final)")
                 continue
+            _detail(f"date {date} game {game_pk} update status={status_state} force={force}")
             # Boxscore: refresh from MLB and overwrite cache so totals update
             box = await refresh_boxscore(game_pk)
             totals = parse_boxscore_totals(box)
@@ -53,6 +72,7 @@ async def update_for_date(date: dt.date, *, force: bool = False) -> int:
                     upsert_batter(db, game=game, date=date, row=row)
                 db.commit()
                 updated += 1
+                _detail(f"date {date} game {game_pk} persisted home={home_team} away={away_team}")
             finally:
                 db.close()
             # Linescore cache
@@ -63,7 +83,9 @@ async def update_for_date(date: dt.date, *, force: bool = False) -> int:
             except Exception:
                 logger.exception("updater: linescore fetch failed game_pk=%s", game_pk)
             # Status cache already refreshed at start of loop
-    logger.info(f"updater: finished update_for_date date={date} updated_games={updated}")
+    dt_secs = (dt.datetime.utcnow() - t0).total_seconds()
+    logger.info(f"updater: finished update_for_date date={date} updated_games={updated} elapsed={dt_secs:.1f}s")
+    _detail(f"date {date} sweep done updated={updated} elapsed={dt_secs:.1f}s")
     return updated
 
 async def _upsert_simple_cache(table: str, game_pk: int, payload: dict):
@@ -95,20 +117,24 @@ async def run_scheduler():
             active_updated = await _update_active_games()
             if active_updated > 0:
                 LAST_UPDATED_GAMES = active_updated
+                _detail(f"active update pass updated_games={active_updated}")
             else:
                 # No live games; perform a lighter sweep for today, skipping finals
                 LAST_UPDATED_GAMES = await update_for_date(today_local)
+                _detail(f"date sweep today={today_local} updated_games={LAST_UPDATED_GAMES}")
             LAST_FINISH = dt.datetime.now()
             IS_RUNNING = False
         except Exception as e:
             LAST_ERROR = str(e)
             IS_RUNNING = False
             logger.exception("updater: unexpected error in scheduler loop")
+            _detail(f"scheduler error: {e}")
         # Cleanup old cache entries beyond retention window
         try:
             await _cleanup_old_cache()
         except Exception:
             logger.exception("updater: cache cleanup failed")
+            _detail("cache cleanup failed")
         # Sleep interval: 60s if any Live games exist, else 300s
         try:
             has_live = await _has_any_live_games()
@@ -129,7 +155,9 @@ async def run_scheduler():
                     pass
         except Exception:
             has_live = False
-        await asyncio.sleep(60 if has_live else 300)
+        interval = 60 if has_live else 300
+        _detail(f"sleep interval={interval}s has_live={has_live}")
+        await asyncio.sleep(interval)
 
 
 # ---- Helper functions ----
@@ -202,6 +230,7 @@ async def _update_active_games() -> int:
             # if not (abstract == "live" or "in progress" in detailed or "live" in detailed):
             #     continue
             game_pk = row.game_pk
+            _detail(f"active pass game {game_pk} begin")
             # Determine date for DB upsert: prefer existing Game row; else derive from status datetime; default to 'today' in update_tz
             tz = zoneinfo.ZoneInfo(settings.update_tz)
             gdate = dt.datetime.now(tz).date()
@@ -225,6 +254,7 @@ async def _update_active_games() -> int:
             # Refresh status (to keep it fresh) and skip if it just turned final
             state = await _refresh_and_get_status_state(client, game_pk)
             if state == "final":
+                _detail(f"active pass game {game_pk} now final skip")
                 continue
 
             # Refresh boxscore and linescore, then persist
@@ -242,6 +272,7 @@ async def _update_active_games() -> int:
                         upsert_batter(db3, game=game, date=gdate, row=rowp)
                     db3.commit()
                     updated += 1
+                    _detail(f"active pass game {game_pk} persisted date={gdate}")
                 finally:
                     db3.close()
                 # linescore
@@ -251,8 +282,10 @@ async def _update_active_games() -> int:
                     await _upsert_simple_cache("linescore_cache", game_pk, r.json())
                 except Exception:
                     logger.exception("updater: linescore fetch failed game_pk=%s", game_pk)
+                    _detail(f"active pass game {game_pk} linescore fetch failed")
             except Exception:
                 logger.exception("updater: active game update failed game_pk=%s", game_pk)
+                _detail(f"active pass game {game_pk} update failed")
     return updated
 
 

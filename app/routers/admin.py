@@ -34,6 +34,16 @@ def updater_status(authorization: str | None = Header(None)):
         "lastError": upd.LAST_ERROR,
     }
 
+@router.get("/updater/logs")
+def updater_logs(limit: int = Query(200, le=1000), authorization: str | None = Header(None)):
+    """Return recent verbose updater logs (if enabled)."""
+    _assert_admin(authorization)
+    if not settings.updater_log_detail:
+        return {"enabled": False, "logs": []}
+    # Return newest last (chronological) limited slice
+    data = list(upd.DETAIL_LOGS)[-limit:]
+    return {"enabled": True, "logs": data, "count": len(data)}
+
 async def _start_run_once(date: str | None):
     # Parse date or use today
     d = Date.fromisoformat(date) if date else Date.today()
