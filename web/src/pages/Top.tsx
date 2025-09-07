@@ -52,7 +52,9 @@ export default function Top() {
   contrib: number; // per-player contribution sum (without base)
     total: number;
     list: Array<{ name: string, steps: number }>;
+    pa?: Record<string,string[]>; // plate appearances per player (sequence)
   }>>([]);
+  const [expandedPA, setExpandedPA] = useState<Record<string, boolean>>({});
   const month = useMemo(()=> date.slice(0,7), [date]);
 
   useEffect(()=>{(async()=>{
@@ -141,6 +143,14 @@ export default function Top() {
   async function calcPerPlayerForGame(game: any, side: 'home'|'away') {
     // fetch counts once from API
     const j = await fetchJSON(`/api/steps/goal/game/${game.gamePk}/players?side=${side}`);
+    // plate appearances (optional; ignore errors)
+    let paMap: Record<string,string[]> = {};
+    try {
+      const paRes = await fetchJSON(`/api/games/${game.gamePk}/plate-appearances?side=${side}`);
+      for (const p of paRes.players || []) {
+        paMap[p.name] = p.pa || [];
+      }
+    } catch {}
     const settings = readLocalSettings();
     // Build contribution per player
     const byName: Record<string, number> = {};
@@ -172,7 +182,7 @@ export default function Top() {
   const total = Math.max(0, Math.trunc(settings.base + contrib));
     const opponent = side === 'home' ? game.away.team : game.home.team;
     const label = side === 'home' ? `vs ${opponent}` : `@ ${opponent}`;
-  return { gamePk: game.gamePk, side, opponent, label, base: settings.base, contrib, total, list };
+  return { gamePk: game.gamePk, side, opponent, label, base: settings.base, contrib, total, list, pa: paMap };
   }
 
   // Auto-calc per-player results for the selected team (home or away)
@@ -253,12 +263,26 @@ export default function Top() {
                         <tr><th style={{textAlign:'left'}}>選手</th><th style={{textAlign:'right'}}>歩数</th></tr>
                       </thead>
                       <tbody>
-                        {r.list.map(p=> (
-                          <tr key={p.name}>
-                            <td>{p.name}</td>
-                            <td style={{textAlign:'right'}}>{Math.trunc(p.steps).toLocaleString()}</td>
-                          </tr>
-                        ))}
+                        {r.list.map(p=> {
+                          const key = r.gamePk + ':' + p.name;
+                          const paSeq = r.pa?.[p.name] || [];
+                          const open = expandedPA[key];
+                          return (
+                            <>
+                              <tr key={key} style={{cursor: paSeq.length? 'pointer':'default'}} onClick={()=>{ if(paSeq.length) setExpandedPA(s=>({...s,[key]:!open})); }}>
+                                <td>{p.name}</td>
+                                <td style={{textAlign:'right'}}>{Math.trunc(p.steps).toLocaleString()}</td>
+                              </tr>
+                              {paSeq.length ? (
+                                <tr key={key+'-pa'}>
+                                  <td colSpan={2} style={{background:'#f7f9fc', fontSize:12, padding:'4px 8px'}}>
+                                    打席: {paSeq.join(' ')}
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
