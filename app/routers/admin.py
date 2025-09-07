@@ -43,7 +43,7 @@ async def _start_run_once(date: str | None):
             upd.LAST_ERROR = None
             upd.IS_RUNNING = True
             upd.LAST_START = upd.dt.datetime.now()
-            upd.LAST_UPDATED_GAMES = await upd.update_for_date(d)
+            upd.LAST_UPDATED_GAMES = await upd.update_for_date(d, force=True)
             upd.LAST_FINISH = upd.dt.datetime.now()
         except Exception as e:
             upd.LAST_ERROR = str(e)
@@ -94,7 +94,7 @@ async def updater_backfill_month(
             total = 0
             cur = start
             while cur <= end:
-                total += await upd.update_for_date(cur)
+                total += await upd.update_for_date(cur, force=True)
                 cur += upd.dt.timedelta(days=1)
             upd.LAST_UPDATED_GAMES = total
             upd.LAST_FINISH = upd.dt.datetime.now()
