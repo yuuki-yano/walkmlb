@@ -168,7 +168,9 @@ async def _has_any_live_games() -> bool:
                 detailed = (s.get("detailedState") or "").lower()
                 abstract = (s.get("abstractGameState") or "").lower()
                 if abstract == "live" or "in progress" in detailed or "live" in detailed:
-                    return True
+                    # return True
+                    # 本当はTrueにしたいが、更新されない不具合があるので一旦Falseにする
+                    return False
             except Exception:
                 continue
         return False
