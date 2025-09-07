@@ -20,7 +20,7 @@ LAST_UPDATED_GAMES: int = 0
 LAST_ERROR: str | None = None
 IS_RUNNING: bool = False
 
-async def update_for_date(date: dt.date) -> int:
+async def update_for_date(date: dt.date, *, force: bool = False) -> int:
     logger.info(f"updater: start update_for_date date={date}")
     games = await fetch_schedule(date)
     if not games:
@@ -34,10 +34,10 @@ async def update_for_date(date: dt.date) -> int:
             except Exception:
                 logger.exception("updater: invalid gamePk in schedule item: %s", g)
                 continue
-            # First, get current status to decide whether to update
+            # First, get current status to decide whether to update (unless forced)
             status_state = await _refresh_and_get_status_state(client, game_pk)
-            # Skip updates if game is Final or later
-            if status_state == "final":
+            # Skip updates if game is Final or later (unless force=True)
+            if (not force) and status_state == "final":
                 continue
             # Boxscore: refresh from MLB and overwrite cache so totals update
             box = await refresh_boxscore(game_pk)
