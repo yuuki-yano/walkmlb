@@ -140,7 +140,7 @@ async def game_plate_appearances(game_pk: int, side: str, db: Session = Depends(
         import httpx
         try:
             url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=59.0) as client:
                 r = await client.get(url)
                 r.raise_for_status()
                 feed = r.json()

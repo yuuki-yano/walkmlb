@@ -27,7 +27,7 @@ async def update_for_date(date: dt.date, *, force: bool = False) -> int:
         logger.info("updater: no games returned from schedule")
         return 0
     updated = 0
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=59.0) as client:
         for g in games:
             try:
                 game_pk = int(g.get("gamePk") or 0)
@@ -190,7 +190,7 @@ async def _update_active_games() -> int:
         db.close()
     if not rows:
         return 0
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=59.0) as client:
         for row in rows:
             try:
                 j = _json.loads(row.json)

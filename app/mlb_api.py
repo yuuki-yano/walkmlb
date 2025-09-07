@@ -12,7 +12,7 @@ async def fetch_schedule(date: dt.date) -> List[Dict[str, Any]]:
         "date": date.isoformat(),
         "hydrate": "lineScore"
     }
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=59.0) as client:
         r = await client.get(f"{BASE}/schedule", params=params)
         r.raise_for_status()
         data = r.json()
@@ -56,7 +56,7 @@ async def fetch_boxscore(game_pk: int) -> Dict[str, Any]:
     if cached:
         return cached
     # Otherwise fetch from MLB API and cache
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=59.0) as client:
         r = await client.get(f"{BASE}/game/{game_pk}/boxscore")
         r.raise_for_status()
         data = r.json()
@@ -65,7 +65,7 @@ async def fetch_boxscore(game_pk: int) -> Dict[str, Any]:
 
 async def refresh_boxscore(game_pk: int) -> Dict[str, Any]:
     """Always fetch boxscore from MLB API and overwrite cache."""
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=59.0) as client:
         r = await client.get(f"{BASE}/game/{game_pk}/boxscore")
         r.raise_for_status()
         data = r.json()
@@ -81,7 +81,7 @@ async def fetch_game_status(game_pk: int) -> Dict[str, str]:
             j = json.loads(row.json)
         else:
             url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=59.0) as client:
                 r = await client.get(url)
                 r.raise_for_status()
                 j = r.json()
@@ -100,7 +100,7 @@ async def fetch_linescore(game_pk: int) -> Dict[str, Any]:
         row = db.query(LinescoreCache).filter(LinescoreCache.game_pk == game_pk).one_or_none()
         if row:
             return json.loads(row.json)
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=59.0) as client:
             r = await client.get(f"{BASE}/game/{game_pk}/linescore")
             r.raise_for_status()
             data = r.json()
