@@ -23,4 +23,7 @@ class Settings(BaseModel):
     # Simple admin authentication token for protected endpoints
     admin_token: str | None = os.getenv("ADMIN_TOKEN") or None
 
+    # Cache retention (days) for *_cache tables (boxscore/linescore/status)
+    cache_retention_days: int = int(os.getenv("CACHE_RETENTION_DAYS", 3))
+
 settings = Settings()
