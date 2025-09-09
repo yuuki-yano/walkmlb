@@ -203,7 +203,7 @@ async def game_batting_order(game_pk: int, side: str, db: Session = Depends(get_
         box = await fetch_boxscore(game_pk)
     team = (box.get("teams", {}) or {}).get(side, {})
     players = team.get("players", {}) or {}
-    # Collect players with battingOrder info
+    # Collect players with battingOrder info from boxscore
     entries = []
     for p in players.values():
         person = p.get("person", {}) or {}
@@ -225,6 +225,51 @@ async def game_batting_order(game_pk: int, side: str, db: Session = Depends(get_
             "pos": pos,
             "positions": all_positions,
         })
+    # Augment with current lineup players from live feed even if they have 0 PAs (no battingOrder yet)
+    try:
+        # Load live feed (from cache if possible)
+        from ..db import StatusCache
+        import json as _json
+        row = db.query(StatusCache).filter(StatusCache.game_pk == game_pk).one_or_none()
+        feed = None
+        if row:
+            try:
+                feed = _json.loads(row.json)
+            except Exception:
+                feed = None
+        if not feed:
+            import httpx
+            async with httpx.AsyncClient(timeout=59.0) as client:
+                r = await client.get(f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live")
+                r.raise_for_status()
+                feed = r.json()
+        team_box = (feed.get("liveData", {}) or {}).get("boxscore", {}).get("teams", {}).get(side, {})
+        lineup_ids = team_box.get("battingOrder", []) or []
+        box_players = team_box.get("players", {}) or {}
+        present_names = {e["name"] for e in entries}
+        for idx, pid in enumerate(lineup_ids):
+            # player key in live feed is like "ID123456"
+            key = f"ID{pid}" if not str(pid).startswith("ID") else str(pid)
+            pl = box_players.get(key) or {}
+            person = pl.get("person") or {}
+            name = person.get("fullName") or "Unknown"
+            if name in present_names:
+                continue
+            pos = (pl.get("position", {}) or {}).get("abbreviation") or ""
+            all_positions = [ap.get("abbreviation") for ap in (pl.get("allPositions") or []) if ap.get("abbreviation")]
+            slot = idx + 1
+            # Assign synthetic order at end of slot to keep after prior stints
+            order = slot * 100 + 999
+            entries.append({
+                "name": name,
+                "order": order,
+                "slot": slot,
+                "pos": pos,
+                "positions": all_positions,
+            })
+    except Exception:
+        # If live feed parsing fails, just return entries from boxscore
+        pass
     # Group by slot and sort within slot by order
     slots_map: dict[int, list] = {}
     for e in entries:
