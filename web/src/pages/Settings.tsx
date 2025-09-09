@@ -29,16 +29,20 @@ export default function Settings() {
     return r.json();
   };
 
+  // Server defaults (from /api/steps/settings) used for placeholders
   const [base, setBase] = useState<number>(6000);
   const [perPlayer, setPerPlayer] = useState<PerPlayer>({ perHit: -100, perHR: -300, perError: 50, perSO: 100 });
+  // Global input states (strings allow blanks)
+  type PerPlayerStr = Partial<Record<keyof PerPlayer, string>>;
+  const [baseInput, setBaseInput] = useState<string>('');
+  const [perInputs, setPerInputs] = useState<PerPlayerStr>({});
   const [overrides, setOverrides] = useState<Record<string, Partial<PerPlayer>>>({});
   const [dateParam, setDateParam] = useState<string | null>(null);
   const [teamParam, setTeamParam] = useState<string | null>(null);
   const [teams, setTeams] = useState<string[]>([]);
   const [dailyNames, setDailyNames] = useState<string[]>([]);
   const [dailyOverrides, setDailyOverrides] = useState<Record<string, Partial<PerPlayer>>>({});
-  // Keep raw input text to allow blank and negative typing states
-  type PerPlayerStr = Partial<Record<keyof PerPlayer, string>>;
+  // Keep raw input text to allow blank and negative typing states (daily overrides)
   const [dailyInputs, setDailyInputs] = useState<Record<string, PerPlayerStr>>({});
 
   // Derived list of player names to render (from overrides keys)
@@ -74,8 +78,17 @@ export default function Settings() {
     if (s) {
       try {
         const j = JSON.parse(s);
-        if (j.base) setBase(j.base);
-        if (j.perPlayer) setPerPlayer(j.perPlayer);
+        if (j.base != null) setBaseInput(String(j.base)); else setBaseInput('');
+        if (j.perPlayer && typeof j.perPlayer === 'object') {
+          setPerInputs({
+            perHit: j.perPlayer.perHit != null ? String(j.perPlayer.perHit) : '',
+            perHR: j.perPlayer.perHR != null ? String(j.perPlayer.perHR) : '',
+            perError: j.perPlayer.perError != null ? String(j.perPlayer.perError) : '',
+            perSO: j.perPlayer.perSO != null ? String(j.perPlayer.perSO) : '',
+          });
+        } else {
+          setPerInputs({});
+        }
   if (j.overrides && typeof j.overrides === 'object') setOverrides(j.overrides);
       } catch {}
     }
@@ -119,7 +132,15 @@ export default function Settings() {
   }, [dailyNames, dailyOverrides]);
 
   const save = () => {
-    localStorage.setItem('playerSettings', JSON.stringify({ base, perPlayer, overrides }));
+    const payload: any = { overrides };
+    if (baseInput !== '') payload.base = Number(baseInput);
+    const pp: any = {};
+    if (perInputs.perHit !== undefined && perInputs.perHit !== '') pp.perHit = Number(perInputs.perHit);
+    if (perInputs.perHR !== undefined && perInputs.perHR !== '') pp.perHR = Number(perInputs.perHR);
+    if (perInputs.perError !== undefined && perInputs.perError !== '') pp.perError = Number(perInputs.perError);
+    if (perInputs.perSO !== undefined && perInputs.perSO !== '') pp.perSO = Number(perInputs.perSO);
+    if (Object.keys(pp).length > 0) payload.perPlayer = pp;
+    localStorage.setItem('playerSettings', JSON.stringify(payload));
     alert('保存しました');
   };
 
@@ -215,15 +236,16 @@ export default function Settings() {
           <div className="row">
               <a href={`?date=${encodeURIComponent(dateParam)}`} style={{float:'right', fontSize:'0.8em'}}>TOPに戻る</a>
           </div>
-          <div className="row"><label>ベース（基準歩数） <input type="number" value={base} onChange={e=>setBase(Number(e.target.value))} /></label></div>
+          <div className="row"><label>ベース（基準歩数） <input type="number" value={baseInput} placeholder={String(base)} onChange={e=>setBaseInput(e.target.value)} style={{width:'8em'}} /></label></div>
           <h3>全体の係数（デフォルト値）</h3>
-          <div className="row">
-            <label>ヒット <input type="number" value={perPlayer.perHit} onChange={e=>setPerPlayer({...perPlayer, perHit: Number(e.target.value)})} /></label>
-            <label>ホームラン <input type="number" value={perPlayer.perHR} onChange={e=>setPerPlayer({...perPlayer, perHR: Number(e.target.value)})} /></label>
-            <label>エラー（任意） <input type="number" value={perPlayer.perError} onChange={e=>setPerPlayer({...perPlayer, perError: Number(e.target.value)})} /></label>
-            <label>三振 <input type="number" value={perPlayer.perSO} onChange={e=>setPerPlayer({...perPlayer, perSO: Number(e.target.value)})} /></label>
+          <div className="row" style={{gap:'12px', alignItems:'flex-end'}}>
+            <label>ヒット <input type="number" value={perInputs.perHit ?? ''} placeholder={String(perPlayer.perHit)} onChange={e=>setPerInputs(p=>({...p, perHit: e.target.value}))} style={{width:'6em'}} /></label>
+            <label>ホームラン <input type="number" value={perInputs.perHR ?? ''} placeholder={String(perPlayer.perHR)} onChange={e=>setPerInputs(p=>({...p, perHR: e.target.value}))} style={{width:'6em'}} /></label>
+            <label>エラー <input type="number" value={perInputs.perError ?? ''} placeholder={String(perPlayer.perError)} onChange={e=>setPerInputs(p=>({...p, perError: e.target.value}))} style={{width:'6em'}} /></label>
+            <label>三振 <input type="number" value={perInputs.perSO ?? ''} placeholder={String(perPlayer.perSO)} onChange={e=>setPerInputs(p=>({...p, perSO: e.target.value}))} style={{width:'6em'}} /></label>
+            <button className="primary" onClick={save}>保存</button>
           </div>
-          <p className="small">保存した設定はローカルストレージに記録され、再読み込みしても適用されます。</p>
+          <p className="small">保存した設定はローカルストレージに記録され、再読み込みしても適用されます（負の値も入力できます）。</p>
         </div>
 
         {/* Daily section */}

@@ -11,3 +11,8 @@ select,input{padding:8px;border-radius:8px;border:1px solid #ddd}
 button{padding:10px 16px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer}
 button.primary{background:#0aa370;color:#fff;border-color:#0aa370}
 .small{font-size:12px;color:#666}
+
+/* Bordered tables (used for pitcher/catcher section) */
+.table-bordered{width:100%;border-collapse:collapse;border:1px solid #e5e5e5}
+.table-bordered th,.table-bordered td{border:1px solid #e5e5e5;padding:4px 6px}
+.table-bordered thead tr{background:#fafafa}
