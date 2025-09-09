@@ -341,7 +341,7 @@ export default function Top() {
                     {r.pitchers && r.pitchers.length ? (
                       <div style={{marginTop:8}}>
                         <div style={{marginTop:6}}>
-                          <table style={{width:'100%', borderCollapse:'collapse'}}>
+                          <table className="table-bordered">
                               <thead>
                                 <tr>
                                   <th style={{textAlign:'left'}}>投手/捕手</th>
