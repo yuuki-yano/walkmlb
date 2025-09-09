@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal, Game, BatterStat
 from ..mlb_api import fetch_boxscore, parse_boxscore_totals, parse_player_events
 from ..mlb_api import get_cached_status, get_cached_linescore, get_cached_boxscore, fetch_game_status, fetch_linescore
+from ..mlb_api import _is_final_cached
 from ..db import StatusCache
 import json as _json
 
@@ -70,19 +71,22 @@ async def game_detail(game_pk: int, db: Session = Depends(get_db)):
     if not g:
         raise HTTPException(status_code=404, detail="Game not found")
     box = get_cached_boxscore(game_pk)
-    if not box:
+    if not box and not _is_final_cached(game_pk):
         box = await fetch_boxscore(game_pk)
-    totals = parse_boxscore_totals(box)
-    players = parse_player_events(box)
+    box_safe = box or {"teams": {"home": {}, "away": {}}}
+    totals = parse_boxscore_totals(box_safe)
+    players = parse_player_events(box_safe)
     status = get_cached_status(game_pk)
     if (status.get("detailed") == "Unknown" and status.get("abstract") == "Unknown"):
         try:
-            status = await fetch_game_status(game_pk)
+            # If we already know it's final from cache, avoid network
+            if not _is_final_cached(game_pk):
+                status = await fetch_game_status(game_pk)
         except Exception:
             pass
     ls = get_cached_linescore(game_pk)
-    # If innings are missing/empty, fetch once and cache so scoreboard shows up
-    if not ls.get("innings"):
+    # If innings are missing/empty and not final, fetch once and cache so scoreboard shows up
+    if (not ls.get("innings")) and (not _is_final_cached(game_pk)):
         try:
             ls = await fetch_linescore(game_pk)
         except Exception:
@@ -136,6 +140,13 @@ async def game_plate_appearances(game_pk: int, side: str, db: Session = Depends(
         except Exception:
             feed = None
     if not feed:
+        # If game is Final, don't hit MLB API; return empty
+        try:
+            from ..mlb_api import _is_final_cached
+            if _is_final_cached(game_pk):
+                return {"gamePk": game_pk, "side": side, "players": []}
+        except Exception:
+            pass
         # Fallback: fetch live feed once
         import httpx
         try:
@@ -238,6 +249,10 @@ async def game_batting_order(game_pk: int, side: str, db: Session = Depends(get_
             except Exception:
                 feed = None
         if not feed:
+            # If final, skip augmentation without hitting network
+            from ..mlb_api import _is_final_cached
+            if _is_final_cached(game_pk):
+                raise Exception("skip-live-fetch-final")
             import httpx
             async with httpx.AsyncClient(timeout=59.0) as client:
                 r = await client.get(f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live")
@@ -268,7 +283,7 @@ async def game_batting_order(game_pk: int, side: str, db: Session = Depends(get_
                 "positions": all_positions,
             })
     except Exception:
-        # If live feed parsing fails, just return entries from boxscore
+        # If live feed parsing fails or skipped (final), just return entries from boxscore
         pass
     # Group by slot and sort within slot by order
     slots_map: dict[int, list] = {}
@@ -355,6 +370,10 @@ async def game_pitchers(game_pk: int, side: str):
             except Exception:
                 feed = None
         if not feed:
+            # If final, skip network fetch
+            from ..mlb_api import _is_final_cached
+            if _is_final_cached(game_pk):
+                raise Exception("skip-live-fetch-final")
             import httpx
             async with httpx.AsyncClient(timeout=59.0) as client:
                 r = await client.get(f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live")

@@ -6,6 +6,23 @@ from .db import SessionLocal, BoxscoreCache, LinescoreCache, StatusCache
 
 BASE = "https://statsapi.mlb.com/api/v1"
 
+def _is_final_cached(game_pk: int) -> bool:
+    """Return True if StatusCache says the game is Final; avoids any network calls."""
+    db = SessionLocal()
+    try:
+        row = db.query(StatusCache).filter(StatusCache.game_pk == game_pk).one_or_none()
+        if not row:
+            return False
+        j = json.loads(row.json)
+        s = (j.get("gameData", {}) or {}).get("status", {}) or {}
+        detailed = (s.get("detailedState") or "").lower()
+        abstract = (s.get("abstractGameState") or "").lower()
+        return ("final" in detailed) or (abstract in ("final", "completed")) or ("game over" in detailed)
+    except Exception:
+        return False
+    finally:
+        db.close()
+
 async def fetch_schedule(date: dt.date) -> List[Dict[str, Any]]:
     params = {
         "sportId": 1,
@@ -55,6 +72,9 @@ async def fetch_boxscore(game_pk: int) -> Dict[str, Any]:
     cached = _get_cached_boxscore(game_pk)
     if cached:
         return cached
+    # If cached status indicates Final, do not hit network; return empty structure
+    if _is_final_cached(game_pk):
+        return {}
     # Otherwise fetch from MLB API and cache
     async with httpx.AsyncClient(timeout=59.0) as client:
         r = await client.get(f"{BASE}/game/{game_pk}/boxscore")
@@ -100,6 +120,9 @@ async def fetch_linescore(game_pk: int) -> Dict[str, Any]:
         row = db.query(LinescoreCache).filter(LinescoreCache.game_pk == game_pk).one_or_none()
         if row:
             return json.loads(row.json)
+        # If cached status indicates Final, avoid fetching and return a minimal structure
+        if _is_final_cached(game_pk):
+            return {"innings": [], "teams": {"home": {"runs": 0}, "away": {"runs": 0}}}
         async with httpx.AsyncClient(timeout=59.0) as client:
             r = await client.get(f"{BASE}/game/{game_pk}/linescore")
             r.raise_for_status()
