@@ -51,7 +51,12 @@ async def update_for_date(date: dt.date, *, force: bool = False) -> int:
             except Exception:
                 logger.exception("updater: invalid gamePk in schedule item: %s", g)
                 continue
-            # First, get current status to decide whether to update (unless forced)
+            # First, check cached status; if final and not forced, skip without network
+            cached_state = _get_cached_status_state(game_pk)
+            if (not force) and cached_state == "final":
+                _detail(f"date {date} game {game_pk} skip (final cached)")
+                continue
+            # Otherwise, get current status (refresh from API) to decide whether to update (unless forced)
             status_state = await _refresh_and_get_status_state(client, game_pk)
             # Skip updates if game is Final or later (unless force=True)
             if (not force) and status_state == "final":
@@ -183,6 +188,31 @@ async def _refresh_and_get_status_state(client: httpx.AsyncClient, game_pk: int)
         return "other"
 
 
+def _get_cached_status_state(game_pk: int) -> str:
+    """Return simplified state from StatusCache: 'live' | 'final' | 'other' (no network)."""
+    from .db import SessionLocal, StatusCache
+    import json as _json
+    db = SessionLocal()
+    try:
+        row = db.query(StatusCache).filter(StatusCache.game_pk == game_pk).one_or_none()
+        if not row:
+            return "other"
+        try:
+            j = _json.loads(row.json)
+        except Exception:
+            return "other"
+        s = j.get("gameData", {}).get("status", {})
+        detailed = (s.get("detailedState") or "").lower()
+        abstract = (s.get("abstractGameState") or "").lower()
+        if "final" in detailed or abstract in ("final", "completed") or "game over" in detailed:
+            return "final"
+        if abstract == "live" or "in progress" in detailed or "progress" in detailed or "live" in detailed:
+            return "live"
+        return "other"
+    finally:
+        db.close()
+
+
 async def _has_any_live_games() -> bool:
     """Check StatusCache for any live game quickly without network if possible."""
     from .db import SessionLocal, StatusCache
@@ -224,6 +254,16 @@ async def _update_active_games() -> int:
                 j = _json.loads(row.json)
             except Exception:
                 continue
+            # Skip if cache already indicates Final; avoid network
+            try:
+                s = (j.get("gameData", {}) or {}).get("status", {}) or {}
+                detailed = (s.get("detailedState") or "").lower()
+                abstract = (s.get("abstractGameState") or "").lower()
+                if "final" in detailed or abstract in ("final", "completed") or "game over" in detailed:
+                    _detail(f"active pass game {row.game_pk} cached final skip")
+                    continue
+            except Exception:
+                pass
             # s = j.get("gameData", {}).get("status", {})
             # detailed = (s.get("detailedState") or "").lower()
             # abstract = (s.get("abstractGameState") or "").lower()
