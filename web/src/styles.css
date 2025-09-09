@@ -16,3 +16,7 @@ button.primary{background:#0aa370;color:#fff;border-color:#0aa370}
 .table-bordered{width:100%;border-collapse:collapse;border:1px solid #e5e5e5}
 .table-bordered th,.table-bordered td{border:1px solid #e5e5e5;padding:4px 6px}
 .table-bordered thead tr{background:#fafafa}
+
+/* Horizontal scroll wrapper for small screens */
+.table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.table-scroll--wide table{min-width:720px}
