@@ -53,6 +53,9 @@ export default function Top() {
     total: number;
     list: Array<{ name: string, steps: number }>;
     pa?: Record<string,string[]>; // plate appearances per player (sequence)
+  pitchers?: Array<any>; // extended pitcher stats
+  appearanceOrder?: Record<number, number>;
+  lineupSlots?: Array<{ slot: number; stints: Array<{ name: string; note?: string }> }>;
   }>>([]);
   const [expandedPA, setExpandedPA] = useState<Record<string, boolean>>({});
   const month = useMemo(()=> date.slice(0,7), [date]);
@@ -145,11 +148,25 @@ export default function Top() {
     const j = await fetchJSON(`/api/steps/goal/game/${game.gamePk}/players?side=${side}`);
     // plate appearances (optional; ignore errors)
     let paMap: Record<string,string[]> = {};
+    let orderMap: Record<string, number> = {};
+    let lineupSlots: Array<{ slot: number; stints: Array<{ name: string; note?: string }>}> = [];
     try {
       const paRes = await fetchJSON(`/api/games/${game.gamePk}/plate-appearances?side=${side}`);
       for (const p of paRes.players || []) {
         paMap[p.name] = p.pa || [];
       }
+    } catch {}
+    // pitchers (extended stats)
+    let pitchers: any[] = [];
+    try {
+      const pr = await fetchJSON(`/api/games/${game.gamePk}/pitchers?side=${side}`);
+      pitchers = pr.pitchers || [];
+    } catch {}
+    // batting order and substitutions
+    try {
+      const ordRes = await fetchJSON(`/api/games/${game.gamePk}/batting-order?side=${side}`);
+      orderMap = ordRes.nameToOrder || {};
+      lineupSlots = (ordRes.slots || []).map((s: any)=> ({ slot: s.slot, stints: s.stints.map((t: any)=> ({ name: t.name, note: t.note })) }));
     } catch {}
     const settings = readLocalSettings();
     // Build contribution per player
@@ -177,12 +194,15 @@ export default function Top() {
     add(j.players.homeRuns || [], settings.perHR, 'homeRuns');
     add(j.players.errors || [], settings.perError, 'errors');
     add(j.players.strikeOuts || [], settings.perSO, 'strikeOuts');
-  const list = Object.entries(byName).map(([name, steps])=>({ name, steps })).sort((a,b)=> b.steps - a.steps);
+  // Build list and sort by batting order if available; else by steps desc
+  let list = Object.entries(byName).map(([name, steps])=>({ name, steps, order: orderMap[name] || 99999 }));
+  list.sort((a,b)=> a.order - b.order || b.steps - a.steps);
+  const listOut = list.map(({name, steps})=> ({ name, steps }));
   const contrib = list.reduce((s,x)=> s + x.steps, 0);
   const total = Math.max(0, Math.trunc(settings.base + contrib));
     const opponent = side === 'home' ? game.away.team : game.home.team;
     const label = side === 'home' ? `vs ${opponent}` : `@ ${opponent}`;
-  return { gamePk: game.gamePk, side, opponent, label, base: settings.base, contrib, total, list, pa: paMap };
+  return { gamePk: game.gamePk, side, opponent, label, base: settings.base, contrib, total, list: listOut, pa: paMap, lineupSlots, pitchers };
   }
 
   // Auto-calc per-player results for the selected team (home or away)
@@ -263,7 +283,38 @@ export default function Top() {
                         <tr><th style={{textAlign:'left'}}>選手</th><th style={{textAlign:'right'}}>歩数</th></tr>
                       </thead>
                       <tbody>
-                        {r.list.map(p=> {
+                        {/* If we have lineupSlots, render grouped by batting order with substitution notes */}
+                        {r.lineupSlots && r.lineupSlots.length ? (
+                          r.lineupSlots.map(slot => (
+                            <>
+                              <tr key={`${r.gamePk}:slot:${slot.slot}`} style={{background:'#fafafa'}}>
+                                <td colSpan={2}><b>{slot.slot}番</b></td>
+                              </tr>
+                              {slot.stints.map(st => {
+                                const key = `${r.gamePk}:${st.name}`;
+                                const paSeq = r.pa?.[st.name] || [];
+                                const open = expandedPA[key];
+                                const stepsRow = r.list.find(x=> x.name === st.name);
+                                return (
+                                  <>
+                                    <tr key={key} style={{cursor: paSeq.length? 'pointer':'default'}} onClick={()=>{ if(paSeq.length) setExpandedPA(s=>({...s,[key]:!open})); }}>
+                                      <td>{st.name}{st.note? <span className="small" style={{marginLeft:6,color:'#555'}}>({st.note})</span>: null}</td>
+                                      <td style={{textAlign:'right'}}>{stepsRow? Math.trunc(stepsRow.steps).toLocaleString() : '—'}</td>
+                                    </tr>
+                                    {paSeq.length ? (
+                                      <tr key={key+'-pa'}>
+                                        <td colSpan={2} style={{background:'#f7f9fc', fontSize:12, padding:'4px 8px'}}>
+                                          打席: {paSeq.join(' ')}
+                                        </td>
+                                      </tr>
+                                    ) : null}
+                                  </>
+                                );
+                              })}
+                            </>
+                          ))
+                        ) : (
+                          r.list.map(p=> {
                           const key = r.gamePk + ':' + p.name;
                           const paSeq = r.pa?.[p.name] || [];
                           const open = expandedPA[key];
@@ -282,18 +333,53 @@ export default function Top() {
                               ) : null}
                             </>
                           );
-                        })}
+                        })
+                        )}
                       </tbody>
                     </table>
+                    {/* Pitchers below batters */}
+                    {r.pitchers && r.pitchers.length ? (
+                      <div style={{marginTop:8}}>
+                        <div style={{marginTop:6}}>
+                          <table style={{width:'100%', borderCollapse:'collapse'}}>
+                              <thead>
+                                <tr>
+                                  <th style={{textAlign:'left'}}>投手/捕手</th>
+                                  <th>IP</th><th>R</th><th>ER</th><th>H</th><th>HR</th><th>SO</th><th>BB</th><th>WP</th><th>BK</th><th>BAA</th><th>PB</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {r.pitchers.map((p:any)=> (
+                                  <tr key={p.name}>
+                                    <td>{p.name}</td>
+                                    <td style={{textAlign:'right'}}>{p.IP||'0.0'}</td>
+                                    <td style={{textAlign:'right'}}>{p.R??0}</td>
+                                    <td style={{textAlign:'right'}}>{p.ER??0}</td>
+                                    <td style={{textAlign:'right'}}>{p.H??0}</td>
+                                    <td style={{textAlign:'right'}}>{p.HR??0}</td>
+                                    <td style={{textAlign:'right'}}>{p.SO??0}</td>
+                                    <td style={{textAlign:'right'}}>{p.BB??0}</td>
+                                    <td style={{textAlign:'right'}}>{p.WP??0}</td>
+                                    <td style={{textAlign:'right'}}>{p.BK??0}</td>
+                                    <td style={{textAlign:'right'}}>{p.BAA!=null? p.BAA.toFixed(3): '-'}</td>
+                                    <td style={{textAlign:'right'}}>{p.PB??0}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}
-              <div className="small" style={{marginTop:6}}>設定（ローカル保存）の係数を使用して算出しています。</div>
+              <br></br><br></br><br></br><br></br>
+              {/* <div className="small" style={{marginTop:6}}>設定（ローカル保存）の係数を使用して算出しています。</div> */}
             </>
           )}
         </div>
       </main>
-      <FooterNav />
+  <FooterNav />
     </>
   );
 }
