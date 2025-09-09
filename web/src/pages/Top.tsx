@@ -340,7 +340,7 @@ export default function Top() {
                     {/* Pitchers below batters */}
                     {r.pitchers && r.pitchers.length ? (
                       <div style={{marginTop:8}}>
-                        <div style={{marginTop:6}}>
+                        <div className="table-scroll table-scroll--wide" style={{marginTop:6}}>
                           <table className="table-bordered">
                               <thead>
                                 <tr>

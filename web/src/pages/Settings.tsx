@@ -267,28 +267,30 @@ export default function Settings() {
           ) : dailyPlayerNames.length === 0 ? (
             <p className="small">選手を取得中、または対象の選手がいません。</p>
           ) : (
-            <table style={{width:'100%', borderCollapse:'collapse', marginTop:8}}>
-              <thead>
-                <tr>
-                  <th style={{textAlign:'left'}}>選手</th>
-                  <th>ヒット</th>
-                  <th>ホームラン</th>
-                  <th>エラー</th>
-                  <th>三振</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dailyPlayerNames.map(name => (
-                  <tr key={name}>
-                    <td style={{textAlign:'left'}}>{name}</td>
-                    <td><input type="number" value={(dailyInputs[name]?.perHit ?? '')} placeholder={String(perPlayer.perHit)} onChange={e=>setDailyInput(name, 'perHit', e.target.value)} style={{width:'5em'}} /></td>
-                    <td><input type="number" value={(dailyInputs[name]?.perHR ?? '')} placeholder={String(perPlayer.perHR)} onChange={e=>setDailyInput(name, 'perHR', e.target.value)} style={{width:'5em'}} /></td>
-                    <td><input type="number" value={(dailyInputs[name]?.perError ?? '')} placeholder={String(perPlayer.perError)} onChange={e=>setDailyInput(name, 'perError', e.target.value)} style={{width:'5em'}} /></td>
-                    <td><input type="number" value={(dailyInputs[name]?.perSO ?? '')} placeholder={String(perPlayer.perSO)} onChange={e=>setDailyInput(name, 'perSO', e.target.value)} style={{width:'5em'}} /></td>
+            <div className="table-scroll table-scroll--wide" style={{marginTop:8}}>
+              <table style={{width:'100%', borderCollapse:'collapse'}}>
+                <thead>
+                  <tr>
+                    <th style={{textAlign:'left'}}>選手</th>
+                    <th>ヒット</th>
+                    <th>ホームラン</th>
+                    <th>エラー</th>
+                    <th>三振</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {dailyPlayerNames.map(name => (
+                    <tr key={name}>
+                      <td style={{textAlign:'left'}}>{name}</td>
+                      <td><input type="number" value={(dailyInputs[name]?.perHit ?? '')} placeholder={String(perPlayer.perHit)} onChange={e=>setDailyInput(name, 'perHit', e.target.value)} style={{width:'5em'}} /></td>
+                      <td><input type="number" value={(dailyInputs[name]?.perHR ?? '')} placeholder={String(perPlayer.perHR)} onChange={e=>setDailyInput(name, 'perHR', e.target.value)} style={{width:'5em'}} /></td>
+                      <td><input type="number" value={(dailyInputs[name]?.perError ?? '')} placeholder={String(perPlayer.perError)} onChange={e=>setDailyInput(name, 'perError', e.target.value)} style={{width:'5em'}} /></td>
+                      <td><input type="number" value={(dailyInputs[name]?.perSO ?? '')} placeholder={String(perPlayer.perSO)} onChange={e=>setDailyInput(name, 'perSO', e.target.value)} style={{width:'5em'}} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div><br></br><br></br>
       </main>
