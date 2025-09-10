@@ -35,6 +35,39 @@ def _detail(msg: str):
     DETAIL_LOGS.append(entry)
     logger.debug(f"detail: {msg}")
 
+def _calc_hash(payload: dict) -> str:
+    import hashlib
+    dumped = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(dumped.encode("utf-8")).hexdigest()
+
+def _shrink_status(payload: dict) -> dict:
+    gd = payload.get("gameData", {}) or {}
+    status = gd.get("status", {})
+    datetime_info = gd.get("datetime", {})
+    teams = gd.get("teams", {})
+    return {
+        "gameData": {
+            "status": status,
+            "datetime": datetime_info,
+            "teams": {
+                "home": {"name": teams.get("home", {}).get("name")},
+                "away": {"name": teams.get("away", {}).get("name")},
+            }
+        }
+    }
+
+def _purge_final_caches(game_pks):
+    from .db import SessionLocal, BoxscoreCache, LinescoreCache, StatusCache
+    dbp = SessionLocal()
+    try:
+        for pk in game_pks:
+            dbp.query(BoxscoreCache).filter(BoxscoreCache.game_pk == pk).delete(synchronize_session=False)
+            dbp.query(LinescoreCache).filter(LinescoreCache.game_pk == pk).delete(synchronize_session=False)
+            dbp.query(StatusCache).filter(StatusCache.game_pk == pk).delete(synchronize_session=False)
+        dbp.commit()
+    finally:
+        dbp.close()
+
 async def update_for_date(date: dt.date, *, force: bool = False) -> int:
     logger.info(f"updater: start update_for_date date={date} force={force}")
     t0 = dt.datetime.utcnow()
@@ -87,6 +120,14 @@ async def update_for_date(date: dt.date, *, force: bool = False) -> int:
                 await _upsert_simple_cache("linescore_cache", game_pk, r.json())
             except Exception:
                 logger.exception("updater: linescore fetch failed game_pk=%s", game_pk)
+            # If final now after updates, purge caches to save space
+            try:
+                state_now = _get_cached_status_state(game_pk)
+                if state_now == "final":
+                    _purge_final_caches([game_pk])
+                    _detail(f"date {date} game {game_pk} purge final caches")
+            except Exception:
+                pass
             # Status cache already refreshed at start of loop
     dt_secs = (dt.datetime.utcnow() - t0).total_seconds()
     logger.info(f"updater: finished update_for_date date={date} updated_games={updated} elapsed={dt_secs:.1f}s")
@@ -96,17 +137,26 @@ async def update_for_date(date: dt.date, *, force: bool = False) -> int:
 async def _upsert_simple_cache(table: str, game_pk: int, payload: dict):
     from .db import LinescoreCache, StatusCache
     model = LinescoreCache if table == "linescore_cache" else StatusCache
-    db = SessionLocal()
+    dbs = SessionLocal()
     try:
-        row = db.query(model).filter(model.game_pk == game_pk).one_or_none()
-        data = json.dumps(payload)
+        row = dbs.query(model).filter(model.game_pk == game_pk).one_or_none()
+        shrunk = _shrink_status(payload) if table == "status_cache" else payload
+        h = _calc_hash(shrunk)
+        data = json.dumps(shrunk)
         if row:
+            if getattr(row, 'hash', None) == h:
+                return
             row.json = data
+            if hasattr(row, 'hash'):
+                row.hash = h
         else:
-            db.add(model(game_pk=game_pk, json=data))
-        db.commit()
+            if hasattr(model, 'hash'):
+                dbs.add(model(game_pk=game_pk, json=data, hash=h))
+            else:
+                dbs.add(model(game_pk=game_pk, json=data))
+        dbs.commit()
     finally:
-        db.close()
+        dbs.close()
 
 async def run_scheduler():
     # Adaptive loop: 60s when any game is Live; 300s otherwise
@@ -295,6 +345,11 @@ async def _update_active_games() -> int:
             state = await _refresh_and_get_status_state(client, game_pk)
             if state == "final":
                 _detail(f"active pass game {game_pk} now final skip")
+                try:
+                    _purge_final_caches([game_pk])
+                    _detail(f"active pass game {game_pk} purge final caches")
+                except Exception:
+                    pass
                 continue
 
             # Refresh boxscore and linescore, then persist

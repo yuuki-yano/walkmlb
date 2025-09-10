@@ -2,6 +2,7 @@ import datetime as dt
 from typing import Any, Dict, List, Tuple
 import httpx
 import json
+import hashlib
 from .db import SessionLocal, BoxscoreCache, LinescoreCache, StatusCache
 
 BASE = "https://statsapi.mlb.com/api/v1"
@@ -53,15 +54,60 @@ def get_cached_boxscore(game_pk: int) -> Dict[str, Any] | None:
     res = _get_cached_boxscore(game_pk)
     return res
 
+TRIM_BOX_KEYS = [
+    # Paths (top-level or nested) we plan to remove if present; we only target top-level keys here
+    "gameData","decision","flags","alerts","liveData","seriesStatus","seriesSummary",
+]
+
+def _shrink_boxscore(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # Create a shallow copy; remove very large or unused keys.
+    out = dict(payload)
+    for k in TRIM_BOX_KEYS:
+        if k in out:
+            out.pop(k, None)
+    # Optionally trim players sub-structure stats we don't need (keep essentials)
+    teams = out.get("teams", {}) or {}
+    for side in ("home","away"):
+        t = teams.get(side)
+        if not t:
+            continue
+        players = t.get("players") or {}
+        for pid, pdata in list(players.items()):
+            stats = pdata.get("stats", {}) or {}
+            batting = stats.get("batting", {})
+            # Keep only fields we use in iter_batters/parse totals
+            keep_batting = {k: batting.get(k) for k in ["atBats","runs","hits","rbi","baseOnBalls","strikeOuts","leftOnBase","homeRuns"] if k in batting}
+            stats_trim = {"batting": keep_batting}
+            fielding = stats.get("fielding", {}) or {}
+            errs = fielding.get("errors")
+            if errs is not None:
+                stats_trim["fielding"] = {"errors": errs}
+            pdata["stats"] = stats_trim
+            # Remove large keys if present
+            for rm in ("allPositions","gameStatus","status"):
+                if rm in pdata:
+                    pdata.pop(rm, None)
+    return out
+
+def _calc_hash(payload: Dict[str, Any]) -> str:
+    # Stable json dump
+    dumped = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(dumped.encode("utf-8")).hexdigest()
+
 def _set_cached_boxscore(game_pk: int, payload: Dict[str, Any]):
+    shrunk = _shrink_boxscore(payload)
+    h = _calc_hash(shrunk)
     db = SessionLocal()
     try:
         row = db.query(BoxscoreCache).filter(BoxscoreCache.game_pk == game_pk).one_or_none()
-        data = json.dumps(payload)
+        data = json.dumps(shrunk)
         if row:
+            if row.hash == h:
+                return  # No change
             row.json = data
+            row.hash = h
         else:
-            row = BoxscoreCache(game_pk=game_pk, json=data)
+            row = BoxscoreCache(game_pk=game_pk, json=data, hash=h)
             db.add(row)
         db.commit()
     finally:
@@ -113,6 +159,12 @@ async def fetch_game_status(game_pk: int) -> Dict[str, str]:
     s = j.get("gameData", {}).get("status", {})
     return {"detailed": s.get("detailedState", "Unknown"), "abstract": s.get("abstractGameState", "Unknown")}
 
+def _shrink_linescore(ls: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(ls)
+    # Keep only innings, teams score, balls/strikes if exist
+    keep = {k: out.get(k) for k in ["innings","teams","currentInning","currentInningOrdinal","isTopInning","balls","strikes","outs"] if k in out}
+    return keep
+
 async def fetch_linescore(game_pk: int) -> Dict[str, Any]:
     """No TTL here; rely on updater. If absent, fetch once and store."""
     db = SessionLocal()
@@ -127,9 +179,18 @@ async def fetch_linescore(game_pk: int) -> Dict[str, Any]:
             r = await client.get(f"{BASE}/game/{game_pk}/linescore")
             r.raise_for_status()
             data = r.json()
-        db.add(LinescoreCache(game_pk=game_pk, json=json.dumps(data)))
+        shrunk = _shrink_linescore(data)
+        h = _calc_hash(shrunk)
+        existing = row
+        if existing and existing.hash == h:
+            return json.loads(existing.json)
+        if existing:
+            existing.json = json.dumps(shrunk)
+            existing.hash = h
+        else:
+            db.add(LinescoreCache(game_pk=game_pk, json=json.dumps(shrunk), hash=h))
         db.commit()
-        return data
+        return shrunk
     finally:
         db.close()
 

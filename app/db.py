@@ -60,6 +60,7 @@ class BoxscoreCache(Base):
     game_pk = Column(Integer, primary_key=True, index=True)
     _JSON_TEXT = Text().with_variant(MYSQL_MEDIUMTEXT(), 'mysql') if MYSQL_MEDIUMTEXT else Text()
     json = Column(_JSON_TEXT, nullable=False)
+    hash = Column(String(64), nullable=True, index=True)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 class LinescoreCache(Base):
@@ -67,6 +68,7 @@ class LinescoreCache(Base):
     game_pk = Column(Integer, primary_key=True, index=True)
     _JSON_TEXT = Text().with_variant(MYSQL_MEDIUMTEXT(), 'mysql') if MYSQL_MEDIUMTEXT else Text()
     json = Column(_JSON_TEXT, nullable=False)
+    hash = Column(String(64), nullable=True, index=True)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 class StatusCache(Base):
@@ -74,6 +76,7 @@ class StatusCache(Base):
     game_pk = Column(Integer, primary_key=True, index=True)
     _JSON_TEXT = Text().with_variant(MYSQL_MEDIUMTEXT(), 'mysql') if MYSQL_MEDIUMTEXT else Text()
     json = Column(_JSON_TEXT, nullable=False)
+    hash = Column(String(64), nullable=True, index=True)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
@@ -92,3 +95,13 @@ def init_db():
         except Exception:
             # Do not block app startup on migration best-effort
             pass
+    # Add hash columns if missing (best-effort)
+    try:
+        with engine.begin() as conn:
+            for tbl in ("boxscore_cache", "linescore_cache", "status_cache"):
+                try:
+                    conn.execute(text(f"ALTER TABLE `{tbl}` ADD COLUMN `hash` VARCHAR(64)"))
+                except Exception:
+                    pass
+    except Exception:
+        pass
