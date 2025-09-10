@@ -3,10 +3,19 @@ import { useEffect, useRef, useState } from 'react';
 // Derive base path for API (works when app is mounted under a subpath)
 const base = new URL('.', window.location.href).pathname.replace(/\/$/, '');
 
-async function fetchJSON(path: string, opts: RequestInit = {}) {
+async function fetchJSON(path: string, opts: RequestInit = {}, retryAlt?: ()=>Promise<RequestInit | null>) {
   const r = await fetch(base + path, opts);
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  if (r.ok) return r.json();
+  // If 401 and retryAlt provider exists, try alternate auth once
+  if (r.status === 401 && retryAlt) {
+    const alt = await retryAlt();
+    if (alt) {
+      const r2 = await fetch(base + path, alt);
+      if (r2.ok) return r2.json();
+      throw new Error(`HTTP ${r2.status}`);
+    }
+  }
+  throw new Error(`HTTP ${r.status}`);
 }
 
 export default function Admin() {
@@ -36,7 +45,25 @@ export default function Admin() {
 
   async function refreshStatus() {
     try {
-      const s = await fetchJSON('/api/updater/status', { headers: { ...authHeaders() } });
+      const headersPrimary = { ...authHeaders() };
+      const s = await fetchJSON('/api/updater/status', { headers: headersPrimary }, async()=>{
+        // fallback: if bearer empty but basic filled OR vice versa
+        try {
+          const sel = (document.querySelector('select') as HTMLSelectElement)?.value;
+          // heuristic: gather inputs
+          const userInput = (document.querySelector('input[placeholder="ユーザ"]') as HTMLInputElement)?.value;
+          const passInput = (document.querySelector('input[placeholder="パスワード"]') as HTMLInputElement)?.value;
+          const tokenInput = (document.querySelector('input[placeholder="ADMIN_TOKEN"]') as HTMLInputElement)?.value;
+          if (sel === 'bearer' && (!tokenInput) && userInput && passInput) {
+            const enc = btoa(`${userInput}:${passInput}`);
+            return { headers: { Authorization: `Basic ${enc}` } };
+          }
+          if (sel === 'basic' && (!userInput || !passInput) && tokenInput) {
+            return { headers: { Authorization: `Bearer ${tokenInput}` } };
+          }
+        } catch {}
+        return null;
+      });
       setStatus(s);
     } catch (e:any) {
       setMessage('ステータス取得に失敗: ' + (e?.message||''));
@@ -116,7 +143,8 @@ export default function Admin() {
 
   async function refreshCache() {
     try {
-      const s = await fetchJSON('/api/cache/summary', { headers: { ...authHeaders() } });
+  const headersPrimary = { ...authHeaders() };
+  const s = await fetchJSON('/api/cache/summary', { headers: headersPrimary });
       setCacheSummary(s);
     } catch (e:any) {
       setMessage('キャッシュ取得失敗: ' + (e?.message||''));
