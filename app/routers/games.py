@@ -2,6 +2,7 @@ import datetime as dt
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
+from collections import defaultdict
 from ..db import SessionLocal, Game, BatterStat, PitcherStat
 from ..mlb_api import fetch_boxscore, parse_boxscore_totals, parse_player_events
 from ..mlb_api import get_cached_status, get_cached_linescore, get_cached_boxscore, fetch_game_status, fetch_linescore
@@ -492,3 +493,93 @@ async def game_pitchers(game_pk: int, side: str, admin: bool | None = False, aut
         # ignore PB extraction errors
         pass
     return {"gamePk": game_pk, "side": side, "pitchers": out, "source": "boxscore-cache" if not admin else "boxscore-admin-refresh"}
+
+@router.get("/pitchers/month")
+def month_pitchers(month: str, team: str | None = None):
+    """Return aggregated pitcher stats for a month (YYYY-MM).
+    Query params:
+      - month: YYYY-MM
+      - team: optional team name filter
+
+    Response:
+      {
+        "month": "2025-09",
+        "team": "Team" | null,
+        "pitchers": [ { team,name,games,IP,SO,BB,H,HR,R,ER,WP,BK,AB,H_allowed,BAA } ],
+        "rawCount": n
+      }
+    """
+    import datetime as _dt
+    try:
+        y, m = month.split('-')
+        first = _dt.date(int(y), int(m), 1)
+        if first.month == 12:
+            last = _dt.date(first.year + 1, 1, 1) - _dt.timedelta(days=1)
+        else:
+            last = _dt.date(first.year, first.month + 1, 1) - _dt.timedelta(days=1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="month must be YYYY-MM")
+    db_local = SessionLocal()
+    try:
+        q = db_local.query(PitcherStat).filter(PitcherStat.date >= first, PitcherStat.date <= last)
+        if team:
+            q = q.filter(PitcherStat.team == team)
+        rows = q.all()
+        # Aggregate by (team,name)
+        agg: dict[tuple[str,str], dict] = {}
+        def ip_to_outs(ip_str: str | None):
+            if not ip_str:
+                return 0
+            try:
+                if '.' in ip_str:
+                    whole, frac = ip_str.split('.')
+                    return int(whole) * 3 + int(frac)
+                return int(ip_str) * 3
+            except Exception:
+                return 0
+        def outs_to_ip(outs: int):
+            whole = outs // 3
+            rem = outs % 3
+            return f"{whole}.{rem}"  # display like 5.2
+        outs_map = defaultdict(int)
+        for r in rows:
+            key = (r.team, r.name)
+            cur = agg.get(key)
+            if not cur:
+                cur = agg[key] = {
+                    "team": r.team,
+                    "name": r.name,
+                    "games": 0,
+                    "SO": 0, "BB": 0, "H": 0, "HR": 0, "R": 0, "ER": 0, "WP": 0, "BK": 0,
+                    "AB": 0, "H_allowed": 0,
+                }
+            cur["games"] += 1
+            cur["SO"] += r.so or 0
+            cur["BB"] += r.bb or 0
+            cur["H"] += r.h or 0
+            cur["HR"] += r.hr or 0
+            cur["R"] += r.r or 0
+            cur["ER"] += r.er or 0
+            cur["WP"] += r.wp or 0
+            cur["BK"] += r.bk or 0
+            cur["AB"] += r.baa_den or 0
+            cur["H_allowed"] += r.baa_num or 0
+            outs_map[key] += ip_to_outs(r.ip)
+        pitchers = []
+        for key, data in agg.items():
+            outs = outs_map[key]
+            data["IP"] = outs_to_ip(outs)
+            if data["AB"] > 0:
+                data["BAA"] = round(data["H_allowed"] / data["AB"], 3)
+            else:
+                data["BAA"] = None
+            pitchers.append(data)
+        pitchers.sort(key=lambda x: (x["team"], x["name"]))
+        return {
+            "month": month,
+            "team": team,
+            "pitchers": pitchers,
+            "rawCount": len(rows),
+        }
+    finally:
+        db_local.close()
