@@ -287,8 +287,33 @@ export default function Admin() {
                 const val = (document.getElementById('rebuild_month') as HTMLInputElement)?.value;
                 if (!val) { alert('月入力'); return; }
                 try {
-                  const r = await authFetch(`/api/rebuild/pitchers/month?month=${encodeURIComponent(val)}`, { method:'POST' });
-                  alert('Rebuilt month=' + val + ' games=' + (r.games||0) + ' pitchers=' + (r.pitchers||0));
+                  const r = await authFetch(`/api/rebuild/pitchers/month?month=${encodeURIComponent(val)}&background=1`, { method:'POST' });
+                  if (r.accepted && r.jobId) {
+                    alert('Accepted background job: ' + r.jobId);
+                    // simple polling
+                    const jobId = r.jobId;
+                    let tries = 0;
+                    const poll = async () => {
+                      try {
+                        const js = await authFetch(`/api/rebuild/pitchers/job/${jobId}`);
+                        if (js.status === 'finished') {
+                          alert(`Finished month rebuild games=${js.games} pitchers=${js.pitchers}`);
+                          return;
+                        }
+                        if (tries < 120) { // up to ~10 min (5s * 120)
+                          tries++;
+                          setTimeout(poll, 5000);
+                        } else {
+                          alert('Polling timeout (job still running).');
+                        }
+                      } catch {
+                        if (tries < 120) { tries++; setTimeout(poll, 6000); }
+                      }
+                    };
+                    setTimeout(poll, 5000);
+                  } else {
+                    alert('Immediate result games=' + (r.games||0) + ' pitchers=' + (r.pitchers||0));
+                  }
                 } catch { alert('失敗'); }
               }}>Rebuild (Month)</button>
             </div>

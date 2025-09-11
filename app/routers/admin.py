@@ -3,7 +3,7 @@ from datetime import date as Date
 import asyncio
 from .. import updater as upd
 from ..config import settings
-import base64
+import base64, uuid, asyncio, datetime as _dt
 from ..db import SessionLocal, BoxscoreCache, LinescoreCache, StatusCache
 from ..db import Game, PitcherStat, engine
 from ..mlb_api import refresh_boxscore
@@ -53,6 +53,9 @@ def _assert_admin(authorization: str | None):
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 router = APIRouter()
+
+# In-memory job store for long tasks (lost on restart)
+_REBUILD_JOBS: dict[str, dict] = {}
 
 @router.get("/updater/status")
 def updater_status(authorization: str | None = Header(None)):
@@ -315,8 +318,10 @@ async def rebuild_pitchers_date(date: str, authorization: str | None = Header(No
         db.close()
 
 @router.post("/rebuild/pitchers/month")
-async def rebuild_pitchers_month(month: str, authorization: str | None = Header(None)):
-    """Rebuild pitcher stats for all games in a month (YYYY-MM)."""
+async def rebuild_pitchers_month(month: str, background: int | None = Query(None, description="1=run async (recommended)"), authorization: str | None = Header(None)):
+    """Rebuild pitcher stats for all games in a month (YYYY-MM).
+    If background=1, runs asynchronously and returns a jobId for polling.
+    """
     _assert_admin(authorization)
     import datetime as _dt
     try:
@@ -331,9 +336,56 @@ async def rebuild_pitchers_month(month: str, authorization: str | None = Header(
     db = SessionLocal()
     try:
         games = db.query(Game).filter(Game.date >= first, Game.date <= last).all()
-        total_games = len(games)
-        total_pitchers = 0
-        from ..crud import upsert_pitcher
+    finally:
+        db.close()
+    total_games = len(games)
+    async_mode = (background == 1)
+    if async_mode:
+        job_id = uuid.uuid4().hex
+        _REBUILD_JOBS[job_id] = {
+            "id": job_id,
+            "type": "rebuild_month_pitchers",
+            "month": month,
+            "status": "running",
+            "started": _dt.datetime.utcnow().isoformat(),
+            "finished": None,
+            "games": total_games,
+            "progressGames": 0,
+            "pitchers": 0,
+            "error": None,
+        }
+        async def _runner(glist):
+            from ..crud import upsert_pitcher
+            local = SessionLocal()
+            try:
+                for idx, g in enumerate(glist):
+                    try:
+                        box = await refresh_boxscore(g.game_pk)
+                        try:
+                            PitcherStat.__table__.create(bind=engine, checkfirst=True)
+                        except Exception:
+                            pass
+                        for side in ("home","away"):
+                            team_name = (box.get("teams", {}) or {}).get(side, {}).get("team", {}) or {}
+                            tname = team_name.get("name", side)
+                            for row in _extract_pitchers_from_boxscore(box, side, tname):
+                                upsert_pitcher(local, game=g, date=g.date, team=tname, row=row)
+                                _REBUILD_JOBS[job_id]["pitchers"] += 1
+                        local.commit()
+                    except Exception as e:
+                        _REBUILD_JOBS[job_id]["error"] = str(e)
+                    _REBUILD_JOBS[job_id]["progressGames"] = idx + 1
+                _REBUILD_JOBS[job_id]["status"] = "finished"
+                _REBUILD_JOBS[job_id]["finished"] = _dt.datetime.utcnow().isoformat()
+            finally:
+                local.close()
+        asyncio.create_task(_runner(games))
+        return {"accepted": True, "jobId": job_id, "games": total_games}
+    # synchronous
+    from ..crud import upsert_pitcher
+    db2 = SessionLocal()
+    total_pitchers = 0
+    try:
         for g in games:
             box = await refresh_boxscore(g.game_pk)
             try:
@@ -344,9 +396,17 @@ async def rebuild_pitchers_month(month: str, authorization: str | None = Header(
                 team_name = (box.get("teams", {}) or {}).get(side, {}).get("team", {}) or {}
                 tname = team_name.get("name", side)
                 for row in _extract_pitchers_from_boxscore(box, side, tname):
-                    upsert_pitcher(db, game=g, date=g.date, team=tname, row=row)
+                    upsert_pitcher(db2, game=g, date=g.date, team=tname, row=row)
                     total_pitchers += 1
-        db.commit()
-        return {"month": month, "games": total_games, "pitchers": total_pitchers}
+        db2.commit()
+        return {"month": month, "games": total_games, "pitchers": total_pitchers, "background": False}
     finally:
-        db.close()
+        db2.close()
+
+@router.get("/rebuild/pitchers/job/{job_id}")
+def rebuild_job_status(job_id: str, authorization: str | None = Header(None)):
+    _assert_admin(authorization)
+    job = _REBUILD_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="job not found")
+    return job
