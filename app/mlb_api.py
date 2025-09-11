@@ -263,6 +263,9 @@ def iter_batters(box: Dict[str, Any]):
                 "ab": stats.get("atBats", 0),
                 "r": stats.get("runs", 0),
                 "h": stats.get("hits", 0),
+                "hr": stats.get("homeRuns", 0),
+                # fielding errors for batter (if any) – look into fielding stats
+                "errors": (p.get("stats", {}).get("fielding", {}) or {}).get("errors", 0),
                 "rbi": stats.get("rbi", 0),
                 "bb": stats.get("baseOnBalls", 0),
                 "so": stats.get("strikeOuts", 0),

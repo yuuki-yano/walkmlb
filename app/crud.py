@@ -39,6 +39,29 @@ def upsert_batter(session: Session, *, game: db.Game, date: dt.date, row: dict):
     exists.bb = int(row.get("bb", 0))
     exists.so = int(row.get("so", 0))
     exists.lob = int(row.get("lob", 0))
+    exists.hr = int(row.get("hr", 0))
+    exists.errors = int(row.get("errors", 0))
+
+def upsert_pitcher(session: Session, *, game: db.Game, date: dt.date, team: str, row: dict):
+    exists = session.query(db.PitcherStat).filter_by(
+        game_id=game.id, team=team, name=row["name"],
+    ).one_or_none()
+    if not exists:
+        exists = db.PitcherStat(
+            game_id=game.id, date=date, team=team, name=row["name"],
+        )
+        session.add(exists)
+    exists.ip = row.get("IP") or "0.0"
+    exists.so = int(row.get("SO", 0))
+    exists.bb = int(row.get("BB", 0))
+    exists.h = int(row.get("H", 0))
+    exists.hr = int(row.get("HR", 0))
+    exists.r = int(row.get("R", 0))
+    exists.er = int(row.get("ER", 0))
+    exists.wp = int(row.get("WP", 0))
+    exists.bk = int(row.get("BK", 0))
+    exists.baa_num = int(row.get("H", 0))
+    exists.baa_den = int(row.get("AB", 0))
 
 
 def compute_steps_for_date(session: Session, date: dt.date, team: str | None = None) -> int:

@@ -1,8 +1,8 @@
 import datetime as dt
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.orm import Session
-from ..db import SessionLocal, Game, BatterStat
+from ..db import SessionLocal, Game, BatterStat, PitcherStat
 from ..mlb_api import fetch_boxscore, parse_boxscore_totals, parse_player_events
 from ..mlb_api import get_cached_status, get_cached_linescore, get_cached_boxscore, fetch_game_status, fetch_linescore
 from ..mlb_api import _is_final_cached
@@ -318,7 +318,7 @@ async def game_batting_order(game_pk: int, side: str, db: Session = Depends(get_
     return {"gamePk": game_pk, "side": side, "slots": slots, "nameToOrder": name_to_order}
 
 @router.get("/games/{game_pk}/pitchers")
-async def game_pitchers(game_pk: int, side: str):
+async def game_pitchers(game_pk: int, side: str, admin: bool | None = False, authorization: str | None = Header(None)):
     """Return pitcher stats for the given side (team perspective: side=home returns home pitchers).
     Includes: strikeOuts, baseOnBalls, hits, homeRuns, wildPitches, balks, passedBall (from play events when available).
     """
@@ -326,8 +326,49 @@ async def game_pitchers(game_pk: int, side: str):
         raise HTTPException(status_code=400, detail="side must be 'home' or 'away'")
     # boxscore provides pitching stats per player
     box = get_cached_boxscore(game_pk)
+    # Validate admin privilege when admin flag requested
+    if admin:
+        from . import admin as admin_mod
+        try:
+            admin_mod._assert_admin(authorization)
+        except Exception:
+            raise HTTPException(status_code=401, detail="Unauthorized admin flag")
+    if (not box) and admin:
+        # 管理操作では強制取得（Final なら空構造でも可）
+        try:
+            box = await fetch_boxscore(game_pk)
+        except Exception:
+            box = None
     if not box:
-        box = await fetch_boxscore(game_pk)
+        # Fallback: try DB pitcher_stats rows
+        from sqlalchemy.orm import Session as _S
+        db = SessionLocal()
+        try:
+            g = db.query(Game).filter(Game.game_pk == game_pk).one_or_none()
+            if not g:
+                return {"gamePk": game_pk, "side": side, "pitchers": [], "source": "db-fallback"}
+            team_name = g.home_team if side == "home" else g.away_team
+            rows = db.query(PitcherStat).filter(PitcherStat.game_id == g.id, PitcherStat.team == team_name).all()
+            out_rows = []
+            for r in rows:
+                baa = (r.baa_num / r.baa_den) if r.baa_den else None
+                out_rows.append({
+                    "name": r.name,
+                    "SO": r.so,
+                    "BB": r.bb,
+                    "H": r.h,
+                    "HR": r.hr,
+                    "WP": r.wp,
+                    "BK": r.bk,
+                    "IP": r.ip,
+                    "R": r.r,
+                    "ER": r.er,
+                    "AB": r.baa_den,
+                    "BAA": round(baa,3) if baa is not None else None,
+                })
+            return {"gamePk": game_pk, "side": side, "pitchers": out_rows, "source": "db-fallback"}
+        finally:
+            db.close()
     team = (box.get("teams", {}) or {}).get(side, {})
     players = team.get("players", {}) or {}
     out = []
@@ -434,4 +475,4 @@ async def game_pitchers(game_pk: int, side: str):
     except Exception:
         # ignore PB extraction errors
         pass
-    return {"gamePk": game_pk, "side": side, "pitchers": out}
+    return {"gamePk": game_pk, "side": side, "pitchers": out, "source": "boxscore-cache" if not admin else "boxscore-admin-refresh"}

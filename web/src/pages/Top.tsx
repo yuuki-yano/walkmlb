@@ -238,6 +238,9 @@ export default function Top() {
 
   return (
     <>
+      {/* 調整中、メンテ中表示 */}
+      <div className="maintenance-message">調整中・メンテナンス中です</div>
+      
       <main>
         <div className="card">
           <div className="row">

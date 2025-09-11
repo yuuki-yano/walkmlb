@@ -4,7 +4,7 @@ import json
 import logging
 from collections import deque
 from .db import SessionLocal
-from .crud import upsert_game, upsert_batter
+from .crud import upsert_game, upsert_batter, upsert_pitcher
 from .mlb_api import fetch_schedule, refresh_boxscore
 from .mlb_api import parse_boxscore_totals, iter_batters
 from .mlb_api import BASE
@@ -108,6 +108,34 @@ async def update_for_date(date: dt.date, *, force: bool = False) -> int:
                 db.flush()
                 for row in iter_batters(box):
                     upsert_batter(db, game=game, date=date, row=row)
+                # Pitchers (from boxscore teams[side].players stats.pitching)
+                try:
+                    for side_team in ("home","away"):
+                        tside = box.get("teams", {}).get(side_team, {})
+                        players = (tside or {}).get("players", {}) or {}
+                        team_name = tside.get("team", {}).get("name", side_team)
+                        for pdata in players.values():
+                            pitch = (pdata.get("stats", {}) or {}).get("pitching", {}) or {}
+                            if not pitch:
+                                continue
+                            person = (pdata.get("person", {}) or {})
+                            name = person.get("fullName") or "Unknown"
+                            rowp = {
+                                "name": name,
+                                "SO": pitch.get("strikeOuts"),
+                                "BB": pitch.get("baseOnBalls"),
+                                "H": pitch.get("hits"),
+                                "HR": pitch.get("homeRuns"),
+                                "IP": pitch.get("inningsPitched"),
+                                "R": pitch.get("runs"),
+                                "ER": pitch.get("earnedRuns"),
+                                "WP": pitch.get("wildPitches"),
+                                "BK": pitch.get("balks"),
+                                "AB": pitch.get("atBats"),
+                            }
+                            upsert_pitcher(db, game=game, date=date, team=team_name, row=rowp)
+                except Exception:
+                    pass
                 db.commit()
                 updated += 1
                 _detail(f"date {date} game {game_pk} persisted home={home_team} away={away_team}")
@@ -365,6 +393,33 @@ async def _update_active_games() -> int:
                     db3.flush()
                     for rowp in iter_batters(box):
                         upsert_batter(db3, game=game, date=gdate, row=rowp)
+                    try:
+                        for side_team in ("home","away"):
+                            tside = box.get("teams", {}).get(side_team, {})
+                            players = (tside or {}).get("players", {}) or {}
+                            team_name = tside.get("team", {}).get("name", side_team)
+                            for pdata in players.values():
+                                pitch = (pdata.get("stats", {}) or {}).get("pitching", {}) or {}
+                                if not pitch:
+                                    continue
+                                person = (pdata.get("person", {}) or {})
+                                name = person.get("fullName") or "Unknown"
+                                rowp2 = {
+                                    "name": name,
+                                    "SO": pitch.get("strikeOuts"),
+                                    "BB": pitch.get("baseOnBalls"),
+                                    "H": pitch.get("hits"),
+                                    "HR": pitch.get("homeRuns"),
+                                    "IP": pitch.get("inningsPitched"),
+                                    "R": pitch.get("runs"),
+                                    "ER": pitch.get("earnedRuns"),
+                                    "WP": pitch.get("wildPitches"),
+                                    "BK": pitch.get("balks"),
+                                    "AB": pitch.get("atBats"),
+                                }
+                                upsert_pitcher(db3, game=game, date=gdate, team=team_name, row=rowp2)
+                    except Exception:
+                        pass
                     db3.commit()
                     updated += 1
                     _detail(f"active pass game {game_pk} persisted date={gdate}")

@@ -2,7 +2,8 @@ import datetime as dt
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from ..db import SessionLocal
+from ..db import SessionLocal, Game, BatterStat
+from ..mlb_api import fetch_boxscore, get_cached_boxscore, parse_player_events
 from ..crud import compute_steps_for_date
 
 router = APIRouter()
@@ -42,16 +43,54 @@ def get_steps_goal_for_game(game_pk: int, side: str, db: Session = Depends(get_d
     return {"gamePk": game_pk, "team": team, "side": side, "steps": steps}
 
 @router.get("/steps/goal/game/{game_pk}/players")
-async def get_steps_goal_for_players(game_pk: int, side: str, db: Session = Depends(get_db)):
-    """Compute steps from player events (hits/HR/errors) for a chosen side using player-level weights."""
+async def get_steps_goal_for_players(game_pk: int, side: str, admin: bool | None = False, db: Session = Depends(get_db)):
+    """Compute steps from player events (hits/HR/errors) for a chosen side.
+    改修: キャッシュ未存在時でも DB (BatterStat) から再構築 / admin=true の場合は強制リフレッシュ。
+    """
     if side not in ("home", "away"):
         raise HTTPException(status_code=400, detail="side must be 'home' or 'away'")
-    from ..mlb_api import get_cached_boxscore, parse_player_events
     from ..config import settings
     box = get_cached_boxscore(game_pk)
+    if (not box) and admin:
+        # 管理操作では常に最新を取りに行く (Final でも改めて空構造可)
+        try:
+            box = await fetch_boxscore(game_pk)
+        except Exception:
+            box = None
     if not box:
-        # Updaterが未反映の場合は一時的に404を返す（外部APIは叩かない）
-        raise HTTPException(status_code=404, detail="Boxscore not cached yet")
+        # Boxscore フル JSON が無い場合は BatterStat からプレイヤーイベント再構築
+        g = db.query(Game).filter(Game.game_pk == game_pk).one_or_none()
+        if not g:
+            raise HTTPException(status_code=404, detail="Game not found")
+        stats = db.query(BatterStat).filter(BatterStat.game_id == g.id, BatterStat.team == (g.home_team if side=="home" else g.away_team)).all()
+        # BatterStat にイベント詳細(HR/エラー毎の個別リスト)は無いので集計値のみ算出
+        hits_n = sum(s.h for s in stats)
+        # HR を列として保持していないので boxscore なしでは 0 とする (必要なら別途保持設計) 
+        hrs_n = 0
+        # errors, strikeouts は batter_stats に含まれる (errors は今は h/so/lob/rbi ... errors ない) -> 不足: errors を保持していないので 0
+        errs_n = 0
+        so_n = sum(s.so for s in stats)
+        steps = (
+            settings.walk_base
+            + settings.walk_per_hit_player * hits_n
+            + settings.walk_per_hr_player * hrs_n
+            + settings.walk_per_error_player * errs_n
+            + settings.walk_per_so_player * so_n
+        )
+        return {
+            "gamePk": game_pk,
+            "team": g.home_team if side=="home" else g.away_team,
+            "side": side,
+            "counts": {"hits": hits_n, "homeRuns": hrs_n, "errors": errs_n, "strikeOuts": so_n},
+            "players": {
+                "hits": [],
+                "homeRuns": [],
+                "errors": [],
+                "strikeOuts": [],
+            },
+            "steps": max(0, int(steps)),
+            "source": "db-fallback"
+        }
     players = parse_player_events(box)[side]
     # counts by event (totals)
     hits_n = sum([p.get('hits', 0) for p in players.get("hits", [])])
@@ -78,6 +117,7 @@ async def get_steps_goal_for_players(game_pk: int, side: str, db: Session = Depe
             "strikeOuts": players.get("strikeOuts", []),
         },
         "steps": max(0, int(steps)),
+        "source": "boxscore-cache" if not admin else "boxscore-admin-refresh"
     }
 
 @router.get("/steps/settings")
