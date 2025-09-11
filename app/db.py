@@ -1,9 +1,11 @@
-from sqlalchemy import create_engine, Column, Integer, String, Date, ForeignKey, UniqueConstraint, Text, DateTime, func, text
+from sqlalchemy import create_engine, Column, Integer, String, Date, ForeignKey, UniqueConstraint, Text, DateTime, func, text, Boolean
 try:
     from sqlalchemy.dialects.mysql import MEDIUMTEXT as MYSQL_MEDIUMTEXT
 except Exception:  # pragma: no cover
     MYSQL_MEDIUMTEXT = None
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+# NOTE: If you previously saw a broken line like 'import setti' it was a partial edit artifact.
+# Ensure we import settings correctly from local config module.
 from .config import settings
 
 Base = declarative_base()
@@ -14,6 +16,37 @@ engine = create_engine(
     pool_recycle=3600,
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+# ---- Auth Models ----
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    email = Column(String(191), unique=True, index=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    role = Column(String(32), default="Normal")  # admin | Premium | Subscribe | Normal
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    is_active = Column(Boolean, nullable=False, server_default=text('1'))
+    # soft delete could be represented by is_active False; keep simple
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    token = Column(String(191), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    revoked_at = Column(DateTime, nullable=True)
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    token = Column(String(191), unique=True, index=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
 
 class Game(Base):
     __tablename__ = "games"
@@ -105,40 +138,5 @@ class StatusCache(Base):
 
 
 def init_db():
+    # Create tables for a fresh database. Further schema changes should be handled via Alembic migrations.
     Base.metadata.create_all(bind=engine)
-    # Ensure MySQL columns can store large JSON payloads (MEDIUMTEXT ~16MB)
-    if settings.database_url.startswith("mysql") and MYSQL_MEDIUMTEXT:
-        try:
-            with engine.begin() as conn:
-                for tbl in ("boxscore_cache", "linescore_cache", "status_cache"):
-                    try:
-                        conn.execute(text(f"ALTER TABLE `{tbl}` MODIFY COLUMN `json` MEDIUMTEXT"))
-                    except Exception:
-                        # Ignore if already MEDIUMTEXT or if table/column doesn't exist yet
-                        pass
-        except Exception:
-            # Do not block app startup on migration best-effort
-            pass
-    # Add hash columns if missing (best-effort)
-    try:
-        with engine.begin() as conn:
-            for tbl in ("boxscore_cache", "linescore_cache", "status_cache"):
-                try:
-                    conn.execute(text(f"ALTER TABLE `{tbl}` ADD COLUMN `hash` VARCHAR(64)"))
-                except Exception:
-                    pass
-    except Exception:
-        pass
-    # Add new batter columns / pitcher table columns best-effort
-    try:
-        with engine.begin() as conn:
-            try:
-                conn.execute(text("ALTER TABLE `batter_stats` ADD COLUMN `hr` INT DEFAULT 0"))
-            except Exception:
-                pass
-            try:
-                conn.execute(text("ALTER TABLE `batter_stats` ADD COLUMN `errors` INT DEFAULT 0"))
-            except Exception:
-                pass
-    except Exception:
-        pass

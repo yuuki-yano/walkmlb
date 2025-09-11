@@ -19,6 +19,9 @@ async function fetchJSON(path: string, opts: RequestInit = {}, retryAlt?: ()=>Pr
 }
 
 export default function Admin() {
+  const accessToken = localStorage.getItem('access_token');
+  const [me, setMe] = useState<any | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [month, setMonth] = useState<string>(()=> new Date().toISOString().slice(0,7));
   const [date, setDate] = useState<string>(()=> new Date().toISOString().slice(0,10));
   const [token, setToken] = useState<string>(()=> localStorage.getItem('walkmlb_admin_token')||'');
@@ -184,7 +187,21 @@ export default function Admin() {
     }
   }
 
-  useEffect(()=>{ refreshStatus(); refreshCache(); },[]);
+  useEffect(()=>{
+    async function loadMe() {
+      if (!accessToken) return;
+      try {
+        const r = await fetch('/api/auth/me', { headers:{ Authorization: 'Bearer ' + accessToken } });
+        if (r.ok) {
+          const j = await r.json();
+          setMe(j);
+          if (j.role !== 'admin') setAuthError('管理者権限が必要です');
+        } else setAuthError('認証失敗');
+      } catch { setAuthError('認証失敗'); }
+    }
+    loadMe();
+    refreshStatus(); refreshCache();
+  },[]);
 
   async function loadMonthPitchers() {
     setMonthPitchersLoading(true); setMonthPitchersMsg('');
@@ -201,11 +218,23 @@ export default function Admin() {
     } finally { setMonthPitchersLoading(false); }
   }
 
+  if (!accessToken) {
+    return <main><div className="card"><h2>管理者</h2><p>ログインしてください。</p></div></main>;
+  }
+  if (authError) {
+    return <main><div className="card"><h2>管理者</h2><p className="error">{authError}</p></div></main>;
+  }
+  if (me && me.role !== 'admin') {
+    return <main><div className="card"><h2>管理者</h2><p className="error">権限不足</p></div></main>;
+  }
   return (
     <>
       <main>
         <div className="card">
           <h2>管理者: 月データ更新</h2>
+          <div className="row" style={{marginTop:4}}>
+            <a href="#/users" style={{fontSize:'0.9rem'}}>▶ ユーザー管理へ</a>
+          </div>
           <div className="row" style={{gap:'1rem'}}>
             <label>認証方式
               <select value={authMode} onChange={e=>{ const v = e.target.value as any; setAuthMode(v); localStorage.setItem('walkmlb_admin_authmode', v); }}>

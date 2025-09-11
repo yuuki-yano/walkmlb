@@ -3,11 +3,12 @@ from fastapi.staticfiles import StaticFiles
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from .routers import importer, games, steps
+from .routers import auth
 from .routers import admin
 from .routers import calendar as calendar_router
 import asyncio
 from .updater import run_scheduler
-from .db import init_db
+from .db import init_db, SessionLocal, User
 from .config import settings
 
 root_path = settings.base_path.rstrip("/") if settings.base_path else ""
@@ -27,6 +28,7 @@ api_prefix = "/api"
 app.include_router(importer.router, prefix=api_prefix, tags=["import"])
 app.include_router(games.router, prefix=api_prefix, tags=["games"])
 app.include_router(steps.router, prefix=api_prefix, tags=["steps"])
+app.include_router(auth.router, prefix=api_prefix, tags=["auth"])
 app.include_router(admin.router, prefix=api_prefix, tags=["admin"])
 app.include_router(calendar_router.router, prefix=api_prefix, tags=["calendar"])
 
@@ -46,3 +48,16 @@ def on_startup():
     # Launch background updater
     loop = asyncio.get_event_loop()
     loop.create_task(run_scheduler())
+    # Optional admin bootstrap
+    if settings.admin_bootstrap_email and settings.admin_bootstrap_password:
+        db = SessionLocal()
+        try:
+            exists = db.query(User).filter(User.email == settings.admin_bootstrap_email.lower()).one_or_none()
+            if not exists and db.query(User).count() == 0:
+                # defer import to avoid circular
+                from .routers.auth import hash_password
+                admin = User(email=settings.admin_bootstrap_email.lower(), password_hash=hash_password(settings.admin_bootstrap_password), role="admin")
+                db.add(admin)
+                db.commit()
+        finally:
+            db.close()

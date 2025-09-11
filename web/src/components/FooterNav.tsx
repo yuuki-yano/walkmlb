@@ -7,6 +7,8 @@ export default function FooterNav() {
     <nav className="footer-nav">
   <Link to="/" style={{opacity:is('/')?1:.7}}>TOP</Link>
   <Link to="/calendar" style={{opacity:is('/calendar')?1:.7}}>カレンダー</Link>
+  <Link to="/login" style={{opacity:is('/login')?1:.7}}>ログイン</Link>
+  {/* <Link to="/users" style={{opacity:is('/users')?1:.7}}>ユーザー</Link> */}
     </nav>
   );
 }

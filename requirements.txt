@@ -6,3 +6,7 @@ sqlalchemy
 python-dotenv
 PyMySQL
 cryptography
+python-jose
+passlib[bcrypt]
+email-validator
+alembic

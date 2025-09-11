@@ -3,11 +3,14 @@ from datetime import date as Date
 import asyncio
 from .. import updater as upd
 from ..config import settings
+from jose import jwt, JWTError
 import base64, uuid, asyncio, datetime as _dt
 from ..db import SessionLocal, BoxscoreCache, LinescoreCache, StatusCache
 from ..db import Game, PitcherStat, engine
 from ..mlb_api import refresh_boxscore
 import json as _json
+
+ALGORITHM = "HS256"
 
 def _assert_admin(authorization: str | None):
     """Authorize request via Bearer token or Basic auth.
@@ -30,12 +33,19 @@ def _assert_admin(authorization: str | None):
 
     auth = authorization.strip()
 
-    # Bearer path
-    if auth.lower().startswith("bearer ") and token_cfg:
+    # Bearer path (legacy static token OR JWT with admin role)
+    if auth.lower().startswith("bearer "):
         supplied = auth[7:].strip()
-        if supplied == token_cfg:
+        # Static token backward compatibility
+        if token_cfg and supplied == token_cfg:
             return
-        # fall through to maybe basic
+        # Try decode as JWT
+        try:
+            payload = jwt.decode(supplied, settings.auth_secret, algorithms=[ALGORITHM])
+            if payload.get("role") == "admin":
+                return
+        except JWTError:
+            pass  # fall through to basic
 
     # Basic path
     if auth.lower().startswith("basic ") and basic_user and basic_pass:
