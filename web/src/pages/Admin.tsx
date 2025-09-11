@@ -33,6 +33,11 @@ export default function Admin() {
   const [maint, setMaint] = useState<boolean>(false);
   const [maintMsg, setMaintMsg] = useState<string>('');
   const [annMsg, setAnnMsg] = useState<string>('');
+  // Monthly pitcher aggregation
+  const [monthPitchers, setMonthPitchers] = useState<any[] | null>(null);
+  const [monthTeam, setMonthTeam] = useState<string>('');
+  const [monthPitchersLoading, setMonthPitchersLoading] = useState<boolean>(false);
+  const [monthPitchersMsg, setMonthPitchersMsg] = useState<string>('');
 
   useEffect(()=>()=>{ if (timerRef.current) window.clearInterval(timerRef.current); },[]);
 
@@ -181,6 +186,21 @@ export default function Admin() {
 
   useEffect(()=>{ refreshStatus(); refreshCache(); },[]);
 
+  async function loadMonthPitchers() {
+    setMonthPitchersLoading(true); setMonthPitchersMsg('');
+    try {
+      if (!month) { setMonthPitchersMsg('月を入力'); setMonthPitchersLoading(false); return; }
+      const params = new URLSearchParams({ month });
+      if (monthTeam.trim()) params.append('team', monthTeam.trim());
+      const j = await fetchJSON('/api/pitchers/month?' + params.toString());
+      setMonthPitchers(j.pitchers || []);
+      setMonthPitchersMsg(`取得: pitchers=${(j.pitchers||[]).length} raw=${j.rawCount}`);
+    } catch (e:any) {
+      setMonthPitchers(null);
+      setMonthPitchersMsg('失敗: ' + (e?.message||''));
+    } finally { setMonthPitchersLoading(false); }
+  }
+
   return (
     <>
       <main>
@@ -314,6 +334,49 @@ export default function Admin() {
           ) : (
             <p className="small">ステータスなし</p>
           )}
+        </div>
+
+        <div style={{height:12}} />
+        <div className="card">
+          <h3>月間投手集計</h3>
+          <div className="row" style={{gap:'0.5rem', flexWrap:'wrap'}}>
+            <label>月 <input type="month" value={month} onChange={e=>setMonth(e.target.value)} /></label>
+            <label>チーム(任意)<input style={{width:140}} value={monthTeam} onChange={e=>setMonthTeam(e.target.value)} placeholder="Team" /></label>
+            <button onClick={loadMonthPitchers} disabled={monthPitchersLoading}>取得</button>
+          </div>
+          {monthPitchersMsg && <p className="small" style={{marginTop:6}}>{monthPitchersMsg}</p>}
+          {monthPitchersLoading ? <p className="small">読み込み中…</p> : null}
+          {(!monthPitchersLoading && monthPitchers && monthPitchers.length === 0) ? <p className="small">データなし</p> : null}
+          {monthPitchers && monthPitchers.length > 0 ? (
+            <div className="table-scroll" style={{maxHeight:320, overflow:'auto', marginTop:8}}>
+              <table className="table-bordered" style={{minWidth:900}}>
+                <thead>
+                  <tr>
+                    <th>Team</th><th>Name</th><th>G</th><th>IP</th><th>SO</th><th>BB</th><th>H</th><th>HR</th><th>R</th><th>ER</th><th>BAA</th><th>WP</th><th>BK</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthPitchers.map(p => (
+                    <tr key={p.team + ':' + p.name}>
+                      <td>{p.team}</td>
+                      <td>{p.name}</td>
+                      <td style={{textAlign:'right'}}>{p.games}</td>
+                      <td style={{textAlign:'right'}}>{p.IP}</td>
+                      <td style={{textAlign:'right'}}>{p.SO}</td>
+                      <td style={{textAlign:'right'}}>{p.BB}</td>
+                      <td style={{textAlign:'right'}}>{p.H}</td>
+                      <td style={{textAlign:'right'}}>{p.HR}</td>
+                      <td style={{textAlign:'right'}}>{p.R}</td>
+                      <td style={{textAlign:'right'}}>{p.ER}</td>
+                      <td style={{textAlign:'right'}}>{p.BAA!=null? Number(p.BAA).toFixed(3): '-'}</td>
+                      <td style={{textAlign:'right'}}>{p.WP}</td>
+                      <td style={{textAlign:'right'}}>{p.BK}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </div>
       </main>
     </>
