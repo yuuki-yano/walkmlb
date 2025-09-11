@@ -281,6 +281,17 @@ export default function Admin() {
                 } catch { alert('失敗'); }
               }}>Rebuild (Date)</button>
             </div>
+            <div className="row" style={{gap:'0.5rem', flexWrap:'wrap', marginTop:8}}>
+              <label>Month <input id="rebuild_month" type="month" defaultValue={month} /></label>
+              <button onClick={async()=>{
+                const val = (document.getElementById('rebuild_month') as HTMLInputElement)?.value;
+                if (!val) { alert('月入力'); return; }
+                try {
+                  const r = await authFetch(`/api/rebuild/pitchers/month?month=${encodeURIComponent(val)}`, { method:'POST' });
+                  alert('Rebuilt month=' + val + ' games=' + (r.games||0) + ' pitchers=' + (r.pitchers||0));
+                } catch { alert('失敗'); }
+              }}>Rebuild (Month)</button>
+            </div>
             <p className="small" style={{marginTop:8}}>Final後に縮小済みキャッシュで投手が欠落した場合に再構築してください。</p>
           </div>
           <div className="row" style={{gap:'1rem', marginTop:8}}>
