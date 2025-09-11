@@ -32,6 +32,19 @@ class Settings(BaseModel):
     maintenance_message: str | None = os.getenv("MAINTENANCE_MESSAGE") or None
     announcement_message: str | None = os.getenv("ANNOUNCEMENT_MESSAGE") or None
 
+    # Auth / Security
+    auth_secret: str = os.getenv("AUTH_SECRET", "change-me-secret")
+    access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60*24))  # default 1 day
+    refresh_token_expire_days: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", 30))
+    allow_self_signup: bool = os.getenv("ALLOW_SELF_SIGNUP", "1") in ("1","true","TRUE","yes")
+    # Optional initial admin bootstrap (created at startup if no users exist)
+    admin_bootstrap_email: str | None = os.getenv("ADMIN_BOOTSTRAP_EMAIL") or None
+    admin_bootstrap_password: str | None = os.getenv("ADMIN_BOOTSTRAP_PASSWORD") or None
+
+    # Login protection
+    auth_max_failed_logins: int = int(os.getenv("AUTH_MAX_FAILED_LOGINS", 5))
+    auth_lock_minutes: int = int(os.getenv("AUTH_LOCK_MINUTES", 15))
+
     # Verbose updater logging (per-game logs)
     updater_log_detail: bool = os.getenv("UPDATER_LOG_DETAIL", "0") in ("1", "true", "TRUE", "yes", "on")
 
