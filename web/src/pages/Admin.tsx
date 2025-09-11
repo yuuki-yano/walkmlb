@@ -30,6 +30,9 @@ export default function Admin() {
   const [authMode, setAuthMode] = useState<'bearer'|'basic'>(()=> (localStorage.getItem('walkmlb_admin_authmode') as any) || 'bearer');
   const [basicUser, setBasicUser] = useState<string>(()=> localStorage.getItem('walkmlb_admin_basic_user')||'');
   const [basicPass, setBasicPass] = useState<string>('');
+  const [maint, setMaint] = useState<boolean>(false);
+  const [maintMsg, setMaintMsg] = useState<string>('');
+  const [annMsg, setAnnMsg] = useState<string>('');
 
   useEffect(()=>()=>{ if (timerRef.current) window.clearInterval(timerRef.current); },[]);
 
@@ -41,6 +44,10 @@ export default function Admin() {
     }
     const t = token.trim();
     return t ? { Authorization: `Bearer ${t}` } : {};
+  }
+
+  function authFetch(path: string, opts: RequestInit = {}) {
+    return fetchJSON(path, { ...opts, headers: { ...(opts.headers||{}), ...authHeaders() } });
   }
 
   async function refreshStatus() {
@@ -68,6 +75,16 @@ export default function Admin() {
     } catch (e:any) {
       setMessage('ステータス取得に失敗: ' + (e?.message||''));
     }
+    await refreshMaintenance();
+  }
+
+  async function refreshMaintenance() {
+    try {
+      const ms = await authFetch('/api/admin/maintenance/status');
+      setMaint(!!ms.maintenance);
+      setMaintMsg(ms.maintenanceMessage || '');
+      setAnnMsg(ms.announcementMessage || '');
+    } catch {}
   }
 
   function startPolling() {
@@ -190,6 +207,35 @@ export default function Admin() {
                 </label>
               </>
             )}
+          </div>
+          <div className="card" style={{marginTop:12}}>
+            <h3>Maintenance / Announcement</h3>
+            <div className="row">
+              <label><input type="checkbox" checked={maint} onChange={e=>setMaint(e.target.checked)} /> Maintenance Mode</label>
+            </div>
+            <div className="row">
+              <label style={{flex:1}}>Maintenance Message<br/>
+                <textarea value={maintMsg} onChange={e=>setMaintMsg(e.target.value)} rows={2} style={{width:'100%'}} />
+              </label>
+            </div>
+            <div className="row">
+              <label style={{flex:1}}>Announcement Message<br/>
+                <textarea value={annMsg} onChange={e=>setAnnMsg(e.target.value)} rows={2} style={{width:'100%'}} />
+              </label>
+            </div>
+            <div className="row">
+              <button onClick={async()=>{
+                try {
+                  const params = new URLSearchParams();
+                  params.append('maintenance', maint? '1':'0');
+                  if (maintMsg) params.append('maintenanceMessage', maintMsg);
+                  if (annMsg) params.append('announcementMessage', annMsg);
+                  await authFetch('/api/admin/maintenance/update?' + params.toString(), { method:'POST' });
+                  await refreshMaintenance();
+                  alert('Updated');
+                } catch { alert('Update failed'); }
+              }}>Update</button>
+            </div>
           </div>
           <div className="row" style={{gap:'1rem', marginTop:8}}>
             <label>月
