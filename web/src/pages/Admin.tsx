@@ -188,10 +188,10 @@ export default function Admin() {
   }
 
   useEffect(()=>{
-    async function loadMe() {
+  async function loadMe() {
       if (!accessToken) return;
       try {
-        const r = await fetch('/api/auth/me', { headers:{ Authorization: 'Bearer ' + accessToken } });
+    const r = await fetch(base + '/api/auth/me', { headers:{ Authorization: 'Bearer ' + accessToken } });
         if (r.ok) {
           const j = await r.json();
           setMe(j);

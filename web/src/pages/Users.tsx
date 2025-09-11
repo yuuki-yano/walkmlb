@@ -6,6 +6,8 @@ type UserRow = { id: number; email: string; role: string; created_at?: string | 
 const ROLES = ["admin","Premium","Subscribe","Normal"];
 
 export default function Users() {
+  // Derive base path for API (supports deployment under a subpath like /mlbwalk)
+  const base = new URL('.', window.location.href).pathname.replace(/\/$/, '');
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,10 +29,10 @@ export default function Users() {
     const headers: Record<string,string> = { ...(init.headers as any || {}) };
     const at = access();
     if (at) headers['Authorization'] = 'Bearer ' + at;
-    const res = await fetch('/api' + path, { ...init, headers });
+  const res = await fetch(base + '/api' + path, { ...init, headers });
     if (res.status === 401 && retry && refresh()) {
       try {
-        const r2 = await fetch('/api/auth/refresh', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ refresh_token: refresh() }) });
+    const r2 = await fetch(base + '/api/auth/refresh', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ refresh_token: refresh() }) });
         if (r2.ok) {
           const j = await r2.json();
             localStorage.setItem('access_token', j.access_token);
@@ -103,7 +105,7 @@ export default function Users() {
   async function requestReset(e: React.FormEvent) {
     e.preventDefault();
     try {
-      const res = await fetch('/api/auth/password/reset-request', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: resetEmail }) });
+  const res = await fetch(base + '/api/auth/password/reset-request', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: resetEmail }) });
       const j = await res.json();
       if (j.token) {
         setResetToken(j.token);
@@ -114,7 +116,7 @@ export default function Users() {
   async function confirmReset(e: React.FormEvent) {
     e.preventDefault();
     try {
-      const res = await fetch('/api/auth/password/reset-confirm', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: resetToken, new_password: resetNewPass }) });
+  const res = await fetch(base + '/api/auth/password/reset-confirm', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token: resetToken, new_password: resetNewPass }) });
       if (res.ok) setInfo('パスワード再設定完了'); else setError('再設定失敗');
     } catch { setError('再設定失敗'); }
   }
