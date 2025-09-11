@@ -333,42 +333,49 @@ async def game_pitchers(game_pk: int, side: str, admin: bool | None = False, aut
             admin_mod._assert_admin(authorization)
         except Exception:
             raise HTTPException(status_code=401, detail="Unauthorized admin flag")
-    if (not box) and admin:
-        # 管理操作では強制取得（Final なら空構造でも可）
+        # Admin は Final でも強制的に最新 boxscore を取得 (refresh_boxscore は Final でも取得)
+        from ..mlb_api import refresh_boxscore
         try:
-            box = await fetch_boxscore(game_pk)
+            box = await refresh_boxscore(game_pk)
         except Exception:
-            box = None
+            # 取得失敗時は既存キャッシュ (無ければ None) のまま継続
+            pass
     if not box:
-        # Fallback: try DB pitcher_stats rows
-        from sqlalchemy.orm import Session as _S
-        db = SessionLocal()
+        # Fallback: try DB pitcher_stats rows safely
+        db_local = SessionLocal()
         try:
-            g = db.query(Game).filter(Game.game_pk == game_pk).one_or_none()
+            try:
+                g = db_local.query(Game).filter(Game.game_pk == game_pk).one_or_none()
+            except Exception:
+                g = None
             if not g:
                 return {"gamePk": game_pk, "side": side, "pitchers": [], "source": "db-fallback"}
             team_name = g.home_team if side == "home" else g.away_team
-            rows = db.query(PitcherStat).filter(PitcherStat.game_id == g.id, PitcherStat.team == team_name).all()
             out_rows = []
-            for r in rows:
-                baa = (r.baa_num / r.baa_den) if r.baa_den else None
-                out_rows.append({
-                    "name": r.name,
-                    "SO": r.so,
-                    "BB": r.bb,
-                    "H": r.h,
-                    "HR": r.hr,
-                    "WP": r.wp,
-                    "BK": r.bk,
-                    "IP": r.ip,
-                    "R": r.r,
-                    "ER": r.er,
-                    "AB": r.baa_den,
-                    "BAA": round(baa,3) if baa is not None else None,
-                })
+            try:
+                rows = db_local.query(PitcherStat).filter(PitcherStat.game_id == g.id, PitcherStat.team == team_name).all()
+                for r in rows:
+                    baa = (r.baa_num / r.baa_den) if r.baa_den else None
+                    out_rows.append({
+                        "name": r.name,
+                        "SO": r.so,
+                        "BB": r.bb,
+                        "H": r.h,
+                        "HR": r.hr,
+                        "WP": r.wp,
+                        "BK": r.bk,
+                        "IP": r.ip,
+                        "R": r.r,
+                        "ER": r.er,
+                        "AB": r.baa_den,
+                        "BAA": round(baa,3) if baa is not None else None,
+                    })
+            except Exception:
+                # pitcher_stats テーブル未作成などの場合
+                pass
             return {"gamePk": game_pk, "side": side, "pitchers": out_rows, "source": "db-fallback"}
         finally:
-            db.close()
+            db_local.close()
     team = (box.get("teams", {}) or {}).get(side, {})
     players = team.get("players", {}) or {}
     out = []
