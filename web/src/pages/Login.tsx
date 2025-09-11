@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import FooterNav from '../components/FooterNav';
+import { Link, useNavigate } from 'react-router-dom';
 
 export default function Login() {
   // Derive base path for API (supports deployment under a subpath like /mlbwalk)
   const base = new URL('.', window.location.href).pathname.replace(/\/$/, '');
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -30,6 +32,8 @@ export default function Login() {
       // store refresh minimally (demo) – production: use httpOnly cookie via server
       localStorage.setItem('access_token', j.access_token);
       localStorage.setItem('refresh_token', j.refresh_token);
+  // Go to My Page after login
+  navigate('/me');
     } catch (err:any) {
       setError(err.message);
     } finally {
@@ -74,6 +78,9 @@ export default function Login() {
               <div className="row"><label>メール <input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></label></div>
               <div className="row"><label>パスワード <input type="password" value={password} onChange={e=>setPassword(e.target.value)} required /></label></div>
               <button disabled={loading}>{loading? '送信中...' : 'ログイン'}</button>
+              <div className="row" style={{marginTop:8}}>
+                <Link to="/signup">新規登録はこちら</Link>
+              </div>
               {error && <p className="error">{error}</p>}
             </form>
           )}

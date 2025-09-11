@@ -6,6 +6,7 @@ from .routers import importer, games, steps
 from .routers import auth
 from .routers import admin
 from .routers import calendar as calendar_router
+from .routers import mypage
 import asyncio
 from .updater import run_scheduler
 from .db import init_db, SessionLocal, User
@@ -31,6 +32,7 @@ app.include_router(steps.router, prefix=api_prefix, tags=["steps"])
 app.include_router(auth.router, prefix=api_prefix, tags=["auth"])
 app.include_router(admin.router, prefix=api_prefix, tags=["admin"])
 app.include_router(calendar_router.router, prefix=api_prefix, tags=["calendar"])
+app.include_router(mypage.router, prefix=api_prefix, tags=["me"])
 
 """
 Static frontend
