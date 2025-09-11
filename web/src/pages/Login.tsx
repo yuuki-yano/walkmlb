@@ -2,6 +2,8 @@ import { useState } from 'react';
 import FooterNav from '../components/FooterNav';
 
 export default function Login() {
+  // Derive base path for API (supports deployment under a subpath like /mlbwalk)
+  const base = new URL('.', window.location.href).pathname.replace(/\/$/, '');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -14,7 +16,7 @@ export default function Login() {
     e.preventDefault();
     setError(null); setLoading(true);
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(base + '/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
@@ -38,7 +40,7 @@ export default function Login() {
   async function doRefresh() {
     if (!refresh) return;
     try {
-      const res = await fetch('/api/auth/refresh', {
+      const res = await fetch(base + '/api/auth/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: refresh })
@@ -54,7 +56,7 @@ export default function Login() {
 
   function logout() {
     if (refresh) {
-      fetch('/api/auth/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({refresh_token: refresh}) });
+      fetch(base + '/api/auth/logout', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({refresh_token: refresh}) });
     }
     setAccess(null); setRefresh(null); setRole(null);
     localStorage.removeItem('access_token');
