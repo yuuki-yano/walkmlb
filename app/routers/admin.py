@@ -313,3 +313,40 @@ async def rebuild_pitchers_date(date: str, authorization: str | None = Header(No
         return {"date": d.isoformat(), "games": total_games, "pitchers": total_pitchers}
     finally:
         db.close()
+
+@router.post("/rebuild/pitchers/month")
+async def rebuild_pitchers_month(month: str, authorization: str | None = Header(None)):
+    """Rebuild pitcher stats for all games in a month (YYYY-MM)."""
+    _assert_admin(authorization)
+    import datetime as _dt
+    try:
+        y, m = month.split('-')
+        first = _dt.date(int(y), int(m), 1)
+        if first.month == 12:
+            last = _dt.date(first.year + 1, 1, 1) - _dt.timedelta(days=1)
+        else:
+            last = _dt.date(first.year, first.month + 1, 1) - _dt.timedelta(days=1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid month")
+    db = SessionLocal()
+    try:
+        games = db.query(Game).filter(Game.date >= first, Game.date <= last).all()
+        total_games = len(games)
+        total_pitchers = 0
+        from ..crud import upsert_pitcher
+        for g in games:
+            box = await refresh_boxscore(g.game_pk)
+            try:
+                PitcherStat.__table__.create(bind=engine, checkfirst=True)
+            except Exception:
+                pass
+            for side in ("home","away"):
+                team_name = (box.get("teams", {}) or {}).get(side, {}).get("team", {}) or {}
+                tname = team_name.get("name", side)
+                for row in _extract_pitchers_from_boxscore(box, side, tname):
+                    upsert_pitcher(db, game=g, date=g.date, team=tname, row=row)
+                    total_pitchers += 1
+        db.commit()
+        return {"month": month, "games": total_games, "pitchers": total_pitchers}
+    finally:
+        db.close()
