@@ -125,9 +125,8 @@ async def fetch_boxscore(game_pk: int) -> Dict[str, Any]:
     cached = _get_cached_boxscore(game_pk)
     if cached:
         return cached
-    # If cached status indicates Final, do not hit network; return empty structure
-    if _is_final_cached(game_pk):
-        return {}
+    # If game is Final but we never cached a boxscore (first request after final), fetch once to retain final stats
+    # (Previously we skipped network and returned empty, causing data loss for post-game views.)
     # Otherwise fetch from MLB API and cache
     async with httpx.AsyncClient(timeout=59.0) as client:
         r = await client.get(f"{BASE}/game/{game_pk}/boxscore")

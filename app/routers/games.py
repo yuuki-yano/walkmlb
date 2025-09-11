@@ -149,23 +149,22 @@ async def game_plate_appearances(game_pk: int, side: str, db: Session = Depends(
             feed = _json.loads(row.json)
         except Exception:
             feed = None
-    if not feed:
-        # If game is Final, don't hit MLB API; return empty
-        try:
-            from ..mlb_api import _is_final_cached
-            if _is_final_cached(game_pk):
-                return {"gamePk": game_pk, "side": side, "players": []}
-        except Exception:
-            pass
-        # Fallback: fetch live feed once
+    if not feed or not ((feed.get("liveData", {}) or {}).get("plays", {}) or {}).get("allPlays"):
+        # Fetch once (even if Final) to ensure we have final play sequence for PAs
         import httpx
         try:
             url = f"https://statsapi.mlb.com/api/v1.1/game/{game_pk}/feed/live"
             async with httpx.AsyncClient(timeout=59.0) as client:
                 r = await client.get(url)
                 r.raise_for_status()
-                feed = r.json()
-            # Save to cache
+                full_feed = r.json()
+            # shrink with updater._shrink_status to store minimal
+            try:
+                from ..updater import _shrink_status
+                shrunk = _shrink_status(full_feed)
+            except Exception:
+                shrunk = full_feed
+            feed = shrunk
             try:
                 payload = _json.dumps(feed)
                 if row:
@@ -176,7 +175,8 @@ async def game_plate_appearances(game_pk: int, side: str, db: Session = Depends(
             except Exception:
                 pass
         except Exception:
-            raise HTTPException(status_code=404, detail="live feed not available")
+            # If still nothing, return empty gracefully
+            return {"gamePk": game_pk, "side": side, "players": []}
 
     all_plays = (feed.get("liveData", {}) or {}).get("plays", {}).get("allPlays", [])
     game_data = feed.get("gameData", {}) or {}

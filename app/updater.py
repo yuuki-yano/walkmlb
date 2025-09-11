@@ -45,6 +45,27 @@ def _shrink_status(payload: dict) -> dict:
     status = gd.get("status", {})
     datetime_info = gd.get("datetime", {})
     teams = gd.get("teams", {})
+    plays = (payload.get("liveData", {}) or {}).get("plays", {}) or {}
+    trimmed_all = []
+    for p in plays.get("allPlays", []) or []:
+        try:
+            about = p.get("about", {}) or {}
+            matchup = p.get("matchup", {}) or {}
+            batter = (matchup.get("batter", {}) or {}).get("fullName")
+            res = p.get("result", {}) or {}
+            trimmed_all.append({
+                "about": {
+                    "halfInning": about.get("halfInning"),
+                    "isComplete": about.get("isComplete"),
+                },
+                "matchup": {"batter": {"fullName": batter}},
+                "result": {
+                    "eventType": res.get("eventType"),
+                    "event": res.get("event"),
+                }
+            })
+        except Exception:
+            continue
     return {
         "gameData": {
             "status": status,
@@ -53,17 +74,23 @@ def _shrink_status(payload: dict) -> dict:
                 "home": {"name": teams.get("home", {}).get("name")},
                 "away": {"name": teams.get("away", {}).get("name")},
             }
+        },
+        "liveData": {
+            "plays": {"allPlays": trimmed_all}
         }
     }
 
 def _purge_final_caches(game_pks):
+    """Previously purged all caches for Final games to save space.
+    This caused loss of pitcher / catcher / plate appearance data post-game.
+    Now we ONLY purge the linescore (least needed after final) and retain boxscore & status
+    so endpoints can continue to show final stats and play sequences.
+    """
     from .db import SessionLocal, BoxscoreCache, LinescoreCache, StatusCache
     dbp = SessionLocal()
     try:
         for pk in game_pks:
-            dbp.query(BoxscoreCache).filter(BoxscoreCache.game_pk == pk).delete(synchronize_session=False)
             dbp.query(LinescoreCache).filter(LinescoreCache.game_pk == pk).delete(synchronize_session=False)
-            dbp.query(StatusCache).filter(StatusCache.game_pk == pk).delete(synchronize_session=False)
         dbp.commit()
     finally:
         dbp.close()
