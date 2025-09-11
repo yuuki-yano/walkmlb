@@ -63,12 +63,9 @@ async def get_steps_goal_for_players(game_pk: int, side: str, admin: bool | None
         if not g:
             raise HTTPException(status_code=404, detail="Game not found")
         stats = db.query(BatterStat).filter(BatterStat.game_id == g.id, BatterStat.team == (g.home_team if side=="home" else g.away_team)).all()
-        # BatterStat にイベント詳細(HR/エラー毎の個別リスト)は無いので集計値のみ算出
         hits_n = sum(s.h for s in stats)
-        # HR を列として保持していないので boxscore なしでは 0 とする (必要なら別途保持設計) 
-        hrs_n = 0
-        # errors, strikeouts は batter_stats に含まれる (errors は今は h/so/lob/rbi ... errors ない) -> 不足: errors を保持していないので 0
-        errs_n = 0
+        hrs_n = sum(getattr(s, 'hr', 0) for s in stats)
+        errs_n = sum(getattr(s, 'errors', 0) for s in stats)
         so_n = sum(s.so for s in stats)
         steps = (
             settings.walk_base
