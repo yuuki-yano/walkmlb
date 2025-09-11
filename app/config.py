@@ -28,6 +28,9 @@ class Settings(BaseModel):
 
     # Cache retention (days) for *_cache tables (boxscore/linescore/status)
     cache_retention_days: int = int(os.getenv("CACHE_RETENTION_DAYS", 3))
+    maintenance_mode: bool = bool(int(os.getenv("MAINTENANCE_MODE", "0")))
+    maintenance_message: str | None = os.getenv("MAINTENANCE_MESSAGE") or None
+    announcement_message: str | None = os.getenv("ANNOUNCEMENT_MESSAGE") or None
 
     # Verbose updater logging (per-game logs)
     updater_log_detail: bool = os.getenv("UPDATER_LOG_DETAIL", "0") in ("1", "true", "TRUE", "yes", "on")

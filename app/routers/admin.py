@@ -5,6 +5,8 @@ from .. import updater as upd
 from ..config import settings
 import base64
 from ..db import SessionLocal, BoxscoreCache, LinescoreCache, StatusCache
+from ..db import Game, PitcherStat, engine
+from ..mlb_api import refresh_boxscore
 import json as _json
 
 def _assert_admin(authorization: str | None):
@@ -189,5 +191,125 @@ def cache_clear(kind: str | None = Query(None, description="boxscore|linescore|s
         cnt = db.query(kinds[kind]).delete(synchronize_session=False)
         db.commit()
         return {"cleared": {kind: cnt}}
+    finally:
+        db.close()
+
+# ---- Maintenance / Announcement ----
+
+@router.get("/maintenance/status")
+def maintenance_status(authorization: str | None = Header(None)):
+    _assert_admin(authorization)
+    return {
+        "maintenance": bool(settings.maintenance_mode),
+        "maintenanceMessage": settings.maintenance_message,
+        "announcementMessage": settings.announcement_message,
+    }
+
+@router.post("/maintenance/update")
+def maintenance_update(
+    maintenance: bool | None = Query(None, description="1=on,0=off"),
+    maintenanceMessage: str | None = Query(None),
+    announcementMessage: str | None = Query(None),
+    authorization: str | None = Header(None)
+):
+    """Update maintenance / announcement messages (in-memory for runtime; env not rewritten)."""
+    _assert_admin(authorization)
+    # mutate existing settings instance (pydantic models allow assignment by default)
+    if maintenance is not None:
+        settings.maintenance_mode = bool(maintenance)  # type: ignore
+    if maintenanceMessage is not None:
+        settings.maintenance_message = maintenanceMessage  # type: ignore
+    if announcementMessage is not None:
+        settings.announcement_message = announcementMessage  # type: ignore
+    return {
+        "updated": True,
+        "maintenance": settings.maintenance_mode,
+        "maintenanceMessage": settings.maintenance_message,
+        "announcementMessage": settings.announcement_message,
+    }
+
+# ---- Pitcher stats rebuild utilities ----
+
+def _extract_pitchers_from_boxscore(box: dict, side: str, team_name: str):
+    players = (box.get("teams", {}) or {}).get(side, {}).get("players", {}) or {}
+    out = []
+    for pdata in players.values():
+        pitch = (pdata.get("stats", {}) or {}).get("pitching", {}) or {}
+        if not pitch:
+            continue
+        person = (pdata.get("person", {}) or {})
+        name = person.get("fullName") or "Unknown"
+        out.append({
+            "name": name,
+            "SO": pitch.get("strikeOuts"),
+            "BB": pitch.get("baseOnBalls"),
+            "H": pitch.get("hits"),
+            "HR": pitch.get("homeRuns"),
+            "IP": pitch.get("inningsPitched"),
+            "R": pitch.get("runs"),
+            "ER": pitch.get("earnedRuns"),
+            "WP": pitch.get("wildPitches"),
+            "BK": pitch.get("balks"),
+            "AB": pitch.get("atBats"),
+        })
+    return out
+
+@router.post("/rebuild/pitchers/game/{game_pk}")
+async def rebuild_pitchers_game(game_pk: int, authorization: str | None = Header(None)):
+    """Force re-fetch boxscore and rebuild PitcherStat rows for a single game (even if Final)."""
+    _assert_admin(authorization)
+    db = SessionLocal()
+    try:
+        g = db.query(Game).filter(Game.game_pk == game_pk).one_or_none()
+        if not g:
+            return {"gamePk": game_pk, "updated": 0, "detail": "game not found"}
+        box = await refresh_boxscore(game_pk)
+        # Ensure pitcher_stats table exists (best-effort)
+        try:
+            PitcherStat.__table__.create(bind=engine, checkfirst=True)
+        except Exception:
+            pass
+        from ..crud import upsert_pitcher
+        updated = 0
+        for side in ("home","away"):
+            team_name = (box.get("teams", {}) or {}).get(side, {}).get("team", {}) or {}
+            tname = team_name.get("name", side)
+            for row in _extract_pitchers_from_boxscore(box, side, tname):
+                upsert_pitcher(db, game=g, date=g.date, team=tname, row=row)
+                updated += 1
+        db.commit()
+        return {"gamePk": game_pk, "updated": updated}
+    finally:
+        db.close()
+
+@router.post("/rebuild/pitchers/date")
+async def rebuild_pitchers_date(date: str, authorization: str | None = Header(None)):
+    """Rebuild pitcher stats for all games on a date (YYYY-MM-DD)."""
+    _assert_admin(authorization)
+    import datetime as _dt
+    try:
+        d = _dt.date.fromisoformat(date)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid date")
+    db = SessionLocal()
+    try:
+        games = db.query(Game).filter(Game.date == d).all()
+        total_games = len(games)
+        total_pitchers = 0
+        from ..crud import upsert_pitcher
+        for g in games:
+            box = await refresh_boxscore(g.game_pk)
+            try:
+                PitcherStat.__table__.create(bind=engine, checkfirst=True)
+            except Exception:
+                pass
+            for side in ("home","away"):
+                team_name = (box.get("teams", {}) or {}).get(side, {}).get("team", {}) or {}
+                tname = team_name.get("name", side)
+                for row in _extract_pitchers_from_boxscore(box, side, tname):
+                    upsert_pitcher(db, game=g, date=g.date, team=tname, row=row)
+                    total_pitchers += 1
+        db.commit()
+        return {"date": d.isoformat(), "games": total_games, "pitchers": total_pitchers}
     finally:
         db.close()

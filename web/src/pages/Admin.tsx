@@ -30,6 +30,9 @@ export default function Admin() {
   const [authMode, setAuthMode] = useState<'bearer'|'basic'>(()=> (localStorage.getItem('walkmlb_admin_authmode') as any) || 'bearer');
   const [basicUser, setBasicUser] = useState<string>(()=> localStorage.getItem('walkmlb_admin_basic_user')||'');
   const [basicPass, setBasicPass] = useState<string>('');
+  const [maint, setMaint] = useState<boolean>(false);
+  const [maintMsg, setMaintMsg] = useState<string>('');
+  const [annMsg, setAnnMsg] = useState<string>('');
 
   useEffect(()=>()=>{ if (timerRef.current) window.clearInterval(timerRef.current); },[]);
 
@@ -41,6 +44,10 @@ export default function Admin() {
     }
     const t = token.trim();
     return t ? { Authorization: `Bearer ${t}` } : {};
+  }
+
+  function authFetch(path: string, opts: RequestInit = {}) {
+    return fetchJSON(path, { ...opts, headers: { ...(opts.headers||{}), ...authHeaders() } });
   }
 
   async function refreshStatus() {
@@ -68,6 +75,16 @@ export default function Admin() {
     } catch (e:any) {
       setMessage('ステータス取得に失敗: ' + (e?.message||''));
     }
+  await refreshMaintenance();
+  }
+
+  async function refreshMaintenance() {
+    try {
+      const ms = await authFetch('/api/maintenance/status');
+      setMaint(!!ms.maintenance);
+      setMaintMsg(ms.maintenanceMessage || '');
+      setAnnMsg(ms.announcementMessage || '');
+    } catch {}
   }
 
   function startPolling() {
@@ -190,6 +207,61 @@ export default function Admin() {
                 </label>
               </>
             )}
+          </div>
+          <div className="card" style={{marginTop:12}}>
+            <h3>Maintenance / Announcement</h3>
+            <div className="row">
+              <label><input type="checkbox" checked={maint} onChange={e=>setMaint(e.target.checked)} /> Maintenance Mode</label>
+            </div>
+            <div className="row">
+              <label style={{flex:1}}>Maintenance Message<br/>
+                <textarea value={maintMsg} onChange={e=>setMaintMsg(e.target.value)} rows={2} style={{width:'100%'}} />
+              </label>
+            </div>
+            <div className="row">
+              <label style={{flex:1}}>Announcement Message<br/>
+                <textarea value={annMsg} onChange={e=>setAnnMsg(e.target.value)} rows={2} style={{width:'100%'}} />
+              </label>
+            </div>
+            <div className="row">
+              <button onClick={async()=>{
+                try {
+                  const params = new URLSearchParams();
+                  params.append('maintenance', maint? '1':'0');
+                  if (maintMsg) params.append('maintenanceMessage', maintMsg);
+                  if (annMsg) params.append('announcementMessage', annMsg);
+                  await authFetch('/api/maintenance/update?' + params.toString(), { method:'POST' });
+                  await refreshMaintenance();
+                  alert('Updated');
+                } catch { alert('Update failed'); }
+              }}>Update</button>
+            </div>
+          </div>
+          <div className="card" style={{marginTop:12}}>
+            <h3>Pitcher Stats Rebuild</h3>
+            <div className="row" style={{gap:'0.5rem', flexWrap:'wrap'}}>
+              <label>gamePk <input id="rebuild_gamepk" type="number" style={{width:140}} placeholder="123456" /></label>
+              <button onClick={async()=>{
+                const val = (document.getElementById('rebuild_gamepk') as HTMLInputElement)?.value;
+                if (!val) { alert('gamePk 入力'); return; }
+                try {
+                  const r = await authFetch(`/api/rebuild/pitchers/game/${encodeURIComponent(val)}`, { method:'POST' });
+                  alert('Rebuilt gamePk=' + val + ' pitchers=' + (r.updated||0));
+                } catch { alert('失敗'); }
+              }}>Rebuild (Game)</button>
+            </div>
+            <div className="row" style={{gap:'0.5rem', flexWrap:'wrap', marginTop:8}}>
+              <label>Date <input id="rebuild_date" type="date" defaultValue={date} /></label>
+              <button onClick={async()=>{
+                const val = (document.getElementById('rebuild_date') as HTMLInputElement)?.value;
+                if (!val) { alert('日付入力'); return; }
+                try {
+                  const r = await authFetch(`/api/rebuild/pitchers/date?date=${encodeURIComponent(val)}`, { method:'POST' });
+                  alert('Rebuilt date=' + val + ' games=' + (r.games||0) + ' pitchers=' + (r.pitchers||0));
+                } catch { alert('失敗'); }
+              }}>Rebuild (Date)</button>
+            </div>
+            <p className="small" style={{marginTop:8}}>Final後に縮小済みキャッシュで投手が欠落した場合に再構築してください。</p>
           </div>
           <div className="row" style={{gap:'1rem', marginTop:8}}>
             <label>月

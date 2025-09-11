@@ -59,6 +59,27 @@ export default function Top() {
   }>>([]);
   const [expandedPA, setExpandedPA] = useState<Record<string, boolean>>({});
   const month = useMemo(()=> date.slice(0,7), [date]);
+  const [systemStatus, setSystemStatus] = useState<{maintenance:boolean; maintenanceMessage?:string|null; announcementMessage?:string|null}|null>(null);
+
+  // Poll system status occasionally (every 60s) and on mount
+  useEffect(()=>{
+    let active = true;
+    async function loadStatus(){
+      try {
+        const s = await fetchJSON('/api/system/status');
+        if (active) setSystemStatus({
+          maintenance: !!s.maintenance,
+          maintenanceMessage: s.maintenanceMessage || null,
+          announcementMessage: s.announcementMessage || null,
+        });
+      } catch {
+        if (active) setSystemStatus(null);
+      }
+    }
+    loadStatus();
+    const id = setInterval(loadStatus, 60000);
+    return ()=> { active = false; clearInterval(id); };
+  }, []);
 
   useEffect(()=>{(async()=>{
     try {
@@ -238,9 +259,18 @@ export default function Top() {
 
   return (
     <>
-      {/* 調整中、メンテ中表示 */}
-      <div className="maintenance-message">調整中・メンテナンス中です</div>
-      
+      {/* Maintenance / Announcement banners (dynamic) */}
+      {systemStatus?.maintenance ? (
+        <div className="maintenance-message">
+          {systemStatus.maintenanceMessage || 'メンテナンス中です'}
+        </div>
+      ) : null}
+      {(!systemStatus?.maintenance && systemStatus?.announcementMessage) ? (
+        <div className="announcement-message">
+          {systemStatus.announcementMessage}
+        </div>
+      ) : null}
+
       <main>
         <div className="card">
           <div className="row">

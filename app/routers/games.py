@@ -11,6 +11,15 @@ import json as _json
 
 router = APIRouter()
 
+@router.get("/system/status")
+def system_status():
+    from ..config import settings as _s
+    return {
+        "maintenance": bool(_s.maintenance_mode),
+        "maintenanceMessage": _s.maintenance_message,
+        "announcementMessage": _s.announcement_message,
+    }
+
 def get_db():
     db = SessionLocal()
     try:
