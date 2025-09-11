@@ -44,6 +44,8 @@ class BatterStat(Base):
     ab = Column(Integer)
     r = Column(Integer)
     h = Column(Integer)
+    hr = Column(Integer, default=0)
+    errors = Column(Integer, default=0)
     rbi = Column(Integer)
     bb = Column(Integer)
     so = Column(Integer)
@@ -52,6 +54,28 @@ class BatterStat(Base):
     game = relationship("Game", back_populates="batters")
     __table_args__ = (
         UniqueConstraint("game_id", "team", "name", name="uq_game_team_player"),
+    )
+
+class PitcherStat(Base):
+    __tablename__ = "pitcher_stats"
+    id = Column(Integer, primary_key=True)
+    game_id = Column(Integer, ForeignKey("games.id"))
+    date = Column(Date, index=True)
+    team = Column(String(64), index=True)
+    name = Column(String(191))
+    ip = Column(String(16))  # innings pitched string form
+    so = Column(Integer, default=0)
+    bb = Column(Integer, default=0)
+    h = Column(Integer, default=0)
+    hr = Column(Integer, default=0)
+    r = Column(Integer, default=0)
+    er = Column(Integer, default=0)
+    wp = Column(Integer, default=0)
+    bk = Column(Integer, default=0)
+    baa_num = Column(Integer, default=0)  # hits
+    baa_den = Column(Integer, default=0)  # at bats
+    __table_args__ = (
+        UniqueConstraint("game_id", "team", "name", name="uq_game_team_pitcher"),
     )
 
 
@@ -103,5 +127,18 @@ def init_db():
                     conn.execute(text(f"ALTER TABLE `{tbl}` ADD COLUMN `hash` VARCHAR(64)"))
                 except Exception:
                     pass
+    except Exception:
+        pass
+    # Add new batter columns / pitcher table columns best-effort
+    try:
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("ALTER TABLE `batter_stats` ADD COLUMN `hr` INT DEFAULT 0"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE `batter_stats` ADD COLUMN `errors` INT DEFAULT 0"))
+            except Exception:
+                pass
     except Exception:
         pass
