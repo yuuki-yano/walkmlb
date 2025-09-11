@@ -74,15 +74,22 @@ def _shrink_boxscore(payload: Dict[str, Any]) -> Dict[str, Any]:
         players = t.get("players") or {}
         for pid, pdata in list(players.items()):
             stats = pdata.get("stats", {}) or {}
-            batting = stats.get("batting", {})
-            # Keep only fields we use in iter_batters/parse totals
+            batting = stats.get("batting", {}) or {}
+            pitching = stats.get("pitching", {}) or {}
+            # Keep only fields we use downstream
             keep_batting = {k: batting.get(k) for k in ["atBats","runs","hits","rbi","baseOnBalls","strikeOuts","leftOnBase","homeRuns"] if k in batting}
-            stats_trim = {"batting": keep_batting}
+            keep_pitching = {k: pitching.get(k) for k in ["strikeOuts","baseOnBalls","hits","homeRuns","inningsPitched","runs","earnedRuns","wildPitches","balks","atBats"] if k in pitching}
+            stats_trim = {}
+            if keep_batting:
+                stats_trim["batting"] = keep_batting
+            if keep_pitching:
+                stats_trim["pitching"] = keep_pitching
             fielding = stats.get("fielding", {}) or {}
             errs = fielding.get("errors")
             if errs is not None:
                 stats_trim["fielding"] = {"errors": errs}
-            pdata["stats"] = stats_trim
+            if stats_trim:
+                pdata["stats"] = stats_trim
             # Remove large keys if present
             for rm in ("allPositions","gameStatus","status"):
                 if rm in pdata:
