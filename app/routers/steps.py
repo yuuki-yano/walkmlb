@@ -25,6 +25,85 @@ def get_steps_goal(date: str, team: Optional[str] = None, db: Session = Depends(
     steps = compute_steps_for_date(db, d, team)
     return {"date": date, "team": team, "steps": steps}
 
+@router.get("/steps/goal/range")
+def get_steps_goal_range(month: str, team: Optional[str] = None, db: Session = Depends(get_db)):
+    """Return goal steps for each day in a month (YYYY-MM) for optional team.
+    Reduces N-per-day calls on calendar page.
+    Team specified: use player-level weights per design (consistent with compute_steps_for_date for team).
+    Team omitted: aggregate league-wide using team-level weights.
+    """
+    # Parse month
+    try:
+        y, m = month.split('-')
+        year = int(y); mon = int(m)
+        from datetime import date as D, timedelta
+        start = D(year, mon, 1)
+        end = D(year+1,1,1) - timedelta(days=1) if mon == 12 else D(year, mon+1,1) - timedelta(days=1)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid month")
+    from ..config import settings
+    days = []
+    if not team:
+        # League-wide: sum both teams per game per day then apply team-level weights
+        games = db.query(Game).filter(Game.date >= start, Game.date <= end).all()
+        per_date = {}
+        for g in games:
+            dkey = g.date
+            agg = per_date.setdefault(dkey, {"hits":0,"homers":0,"errors":0})
+            agg["hits"] += g.home_hits + g.away_hits
+            agg["homers"] += g.home_homers + g.away_homers
+            agg["errors"] += g.home_errors + g.away_errors
+        cur = start
+        from datetime import timedelta
+        while cur <= end:
+            agg = per_date.get(cur, {"hits":0,"homers":0,"errors":0})
+            steps = (
+                settings.walk_base
+                + settings.walk_per_hit * agg["hits"]
+                + settings.walk_per_hr * agg["homers"]
+                + settings.walk_per_error * agg["errors"]
+            )
+            days.append({"date": cur.isoformat(), "steps": max(0,int(steps))})
+            cur += timedelta(days=1)
+        return {"month": month, "team": None, "days": days}
+    # Team-specific: aggregate BatterStat first
+    batter_rows = db.query(BatterStat).filter(BatterStat.team == team, BatterStat.date >= start, BatterStat.date <= end).all()
+    per_date_players = {}
+    for r in batter_rows:
+        agg = per_date_players.setdefault(r.date, {"hits":0,"homers":0,"errors":0,"strikeouts":0})
+        agg["hits"] += r.h
+        agg["homers"] += getattr(r,'hr',0)
+        agg["errors"] += getattr(r,'errors',0)
+        agg["strikeouts"] += r.so
+    # Fallback using Game side-only for dates missing batter stats
+    games_team = db.query(Game).filter(Game.date >= start, Game.date <= end).filter((Game.home_team == team) | (Game.away_team == team)).all()
+    for g in games_team:
+        if g.date in per_date_players:
+            continue
+        agg = per_date_players.setdefault(g.date, {"hits":0,"homers":0,"errors":0,"strikeouts":0})
+        if g.home_team == team:
+            agg["hits"] += g.home_hits
+            agg["homers"] += g.home_homers
+            agg["errors"] += g.home_errors
+        else:
+            agg["hits"] += g.away_hits
+            agg["homers"] += g.away_homers
+            agg["errors"] += g.away_errors
+    from datetime import timedelta
+    cur = start
+    while cur <= end:
+        agg = per_date_players.get(cur, {"hits":0,"homers":0,"errors":0,"strikeouts":0})
+        steps = (
+            settings.walk_base
+            + settings.walk_per_hit_player * agg["hits"]
+            + settings.walk_per_hr_player * agg["homers"]
+            + settings.walk_per_error_player * agg["errors"]
+            + settings.walk_per_so_player * agg["strikeouts"]
+        )
+        days.append({"date": cur.isoformat(), "steps": max(0,int(steps))})
+        cur += timedelta(days=1)
+    return {"month": month, "team": team, "days": days}
+
 @router.get("/steps/goal/game/{game_pk}")
 def get_steps_goal_for_game(game_pk: int, side: str, db: Session = Depends(get_db)):
     """Compute steps for a single game's team side (home or away) using team totals."""
