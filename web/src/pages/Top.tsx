@@ -37,7 +37,9 @@ async function fetchJSON(path: string) {
 export default function Top() {
   const [date, setDate] = useState<string>(()=> readDateFromURL() || new Date().toISOString().slice(0,10));
   const [teams, setTeams] = useState<string[]>([]);
-  const [team, setTeam] = useState<string>(()=> localStorage.getItem('favTeam') || '');
+  const [favTeams, setFavTeams] = useState<string[]>([]); // DB favorites
+  const access = localStorage.getItem('access_token');
+  const [team, setTeam] = useState<string>(()=> localStorage.getItem('selectedTeam') || '');
   const [steps, setSteps] = useState<number | null>(null);
   const [games, setGames] = useState<any[]>([]);
   const [serverDefaults, setServerDefaults] = useState<{ base: number; perHit: number; perHR: number; perError: number; perSO: number } | null>(null);
@@ -83,11 +85,9 @@ export default function Top() {
 
   useEffect(()=>{(async()=>{
     try {
-      // Reuse backend calendar teams endpoint
       const j = await fetchJSON('/api/calendar/teams');
       setTeams(j.teams || []);
     } catch {}
-    // Fetch server default settings once
     try {
       const s = await fetchJSON('/api/steps/settings');
       setServerDefaults({
@@ -98,9 +98,24 @@ export default function Top() {
         perSO: Number(s.player?.perSO ?? 100),
       });
     } catch {}
-  })();},[]);
+    // Load DB favorite teams if logged in
+    try {
+      if (access) {
+        const r = await fetch(base + '/api/me/teams', { headers: { Authorization: 'Bearer ' + access } });
+        if (r.ok) {
+          const j = await r.json();
+          const favs = j.teams || [];
+          setFavTeams(favs);
+          // If no current selection, default to first DB favorite
+          if (!team && favs.length) setTeam(favs[0]);
+        }
+      }
+    } catch {}
+  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [access]);
 
-  useEffect(()=>{ localStorage.setItem('favTeam', team); }, [team]);
+  useEffect(()=>{ if(team) localStorage.setItem('selectedTeam', team); }, [team]);
 
   // Keep date in sync if URL hash query changes (e.g., navigating with links that include ?date=)
   useEffect(()=>{
@@ -278,7 +293,8 @@ export default function Top() {
             <label>チーム
               <select value={team} onChange={e=>setTeam(e.target.value)}>
                 <option value="">(全体)</option>
-                {teams.map(t=> <option key={t} value={t}>{t}</option>)}
+                {favTeams.map(t=> <option key={'fav_'+t} value={t}>{t} (★)</option>)}
+                {teams.filter(t=> !favTeams.includes(t)).map(t=> <option key={t} value={t}>{t}</option>)}
               </select>
             </label>
           </div>

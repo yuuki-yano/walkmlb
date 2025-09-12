@@ -32,6 +32,8 @@ export default function Calendar() {
   const [days, setDays] = useState<Array<{date:string; games:any[]}>>([]);
   const [stepsDays, setStepsDays] = useState<Record<string, number>>({});
   const [goalCache, setGoalCache] = useState<Record<string, number>>({});
+  // シンプル表示をデフォルト ON
+  const [simpleMobile, setSimpleMobile] = useState<boolean>(true);
   const access = localStorage.getItem('access_token');
 
   // Sync date when URL hash query changes (back/forward or external changes)
@@ -108,15 +110,15 @@ export default function Calendar() {
       const key = `${d.date}::${t}`;
       let goal = goalCache[key];
       if (goal === undefined) {
-        // fire-and-forget fetch goal
         (async()=>{
           try {
             const u = new URL(base + '/api/steps/goal', window.location.origin);
             u.searchParams.set('date', d.date);
-            u.searchParams.set('team', t);
+            if (t) u.searchParams.set('team', t);
             const r = await fetch(u.toString());
             if (r.ok) {
               const j = await r.json();
+              // unify with Top: just trust server steps (local player overrides not applicable for multi-day view)
               setGoalCache(prev => ({ ...prev, [key]: j.steps||0 }));
             }
           } catch {}
@@ -125,13 +127,26 @@ export default function Calendar() {
       }
       return { ...d, goal };
     });
-  }, [days, teamSelect, favTeams, goalCache]);
+  }, [days, teamSelect, favTeams, goalCache, base]);
+
+  // Responsive: detect small width
+  useEffect(()=>{
+    const check = () => {
+      // 画面幅が狭い場合は強制的にシンプル表示を有効化（広くてもユーザー操作までは保持）
+      if (window.innerWidth < 520) setSimpleMobile(true);
+    };
+    window.addEventListener('resize', check);
+    return ()=> window.removeEventListener('resize', check);
+  }, []);
 
   return (
     <>
       <main>
         <div className="card">
           <h2>カレンダー</h2>
+          <div style={{marginBottom:8}}>
+            <label style={{fontSize:12}}><input type="checkbox" checked={simpleMobile} onChange={e=>setSimpleMobile(e.target.checked)} /> シンプル表示(1日1行)</label>
+          </div>
           <div className="row" style={{gap:'0.5rem', flexWrap:'wrap'}}>
             <label>日付 <input type="date" value={date} onChange={e=>setDate(e.target.value)} /></label>
             <label>月 <input type="month" value={month} onChange={e=>setMonth(e.target.value)} /></label>
@@ -143,27 +158,50 @@ export default function Calendar() {
               </select>
             </label>
           </div>
-          <div className="calendar-grid" style={{display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:'4px', marginTop:8}}>
-            {daysWithGoal.map(d => (
-              <div key={d.date} className="card small" style={{padding:'6px'}}>
-                <div style={{fontWeight:600}}>{d.date.slice(-2)}日</div>
-                {d.games.length === 0 ? (
-                  <div className="small" style={{opacity:0.7}}>試合なし</div>
-                ) : d.games.map((g:any)=> (
-                  <div key={g.gamePk} style={{marginTop:4}}>
-                    <div className="small">{g.away.team} @ {g.home.team}</div>
-                    <div className="small">US {g.timeLocal||'-'} / JP {g.timeJP||'-'}</div>
-                    <div className="small">{g.status?.detailedState || g.status?.abstractGameState}</div>
-                    {typeof g.home.R === 'number' && typeof g.away.R === 'number' && (
-                      <div className="small">{g.away.R}-{g.home.R}</div>
-                    )}
-                  </div>
-                ))}
-                <div className="small" style={{marginTop:6}}>目標: {d.goal||0} 歩</div>
-                <div className="small">実績: {stepsDays[d.date]||0} 歩</div>
-              </div>
-            ))}
-          </div>
+          {simpleMobile ? (
+            <div style={{marginTop:8}}>
+              <table style={{width:'100%', fontSize:12}}>
+                <thead>
+                  <tr><th style={{textAlign:'left'}}>日</th><th style={{textAlign:'left'}}>試合</th><th>目標</th><th>実績</th></tr>
+                </thead>
+                <tbody>
+                  {daysWithGoal.map(d=>{
+                    const gamesTxt = d.games.length===0 ? '試合なし' : d.games.map((g:any)=> `${g.away.team}@${g.home.team}${(g.home.R!=null&&g.away.R!=null)?' '+g.away.R+'-'+g.home.R:''}`).join(' / ');
+                    return (
+                      <tr key={d.date}>
+                        <td>{d.date.slice(-2)}</td>
+                        <td>{gamesTxt}</td>
+                        <td style={{textAlign:'right'}}>{d.goal||0}</td>
+                        <td style={{textAlign:'right'}}>{stepsDays[d.date]||0}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="calendar-grid" style={{display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:'4px', marginTop:8}}>
+              {daysWithGoal.map(d => (
+                <div key={d.date} className="card small" style={{padding:'6px'}}>
+                  <div style={{fontWeight:600}}>{d.date.slice(-2)}日</div>
+                  {d.games.length === 0 ? (
+                    <div className="small" style={{opacity:0.7}}>試合なし</div>
+                  ) : d.games.map((g:any)=> (
+                    <div key={g.gamePk} style={{marginTop:4}}>
+                      <div className="small">{g.away.team} @ {g.home.team}</div>
+                      <div className="small">US {g.timeLocal||'-'} / JP {g.timeJP||'-'}</div>
+                      <div className="small">{g.status?.detailedState || g.status?.abstractGameState}</div>
+                      {typeof g.home.R === 'number' && typeof g.away.R === 'number' && (
+                        <div className="small">{g.away.R}-{g.home.R}</div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="small" style={{marginTop:6}}>目標: {d.goal||0} 歩</div>
+                  <div className="small">実績: {stepsDays[d.date]||0} 歩</div>
+                </div>
+              ))}
+            </div>
+          )}
           <p className="small" style={{marginTop:8}}>お気に入りが無い場合はチームを選ぶと表示されます。</p>
           {/* <p>右上の静的HTML版はそのまま使えますが、将来的にこちらに置き換え予定です。</p> */}
           {/* <a href="/calendar.html">静的版カレンダーへ</a> */}
