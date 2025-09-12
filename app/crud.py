@@ -65,19 +65,54 @@ def upsert_pitcher(session: Session, *, game: db.Game, date: dt.date, team: str,
 
 
 def compute_steps_for_date(session: Session, date: dt.date, team: str | None = None) -> int:
-    q = session.query(db.Game).filter(db.Game.date == date)
-    if team:
-        q = q.filter((db.Game.home_team == team) | (db.Game.away_team == team))
-    totals = {"hits": 0, "homers": 0, "errors": 0}
-    for g in q:
-        totals["hits"] += g.home_hits + g.away_hits
-        totals["homers"] += g.home_homers + g.away_homers
-        totals["errors"] += g.home_errors + g.away_errors
+    """Compute steps for a date.
 
+    Behavior update (2025-09-12):
+      * When a specific team is provided, only that team's stats are counted (previously opponent team was also included, inflating values).
+      * Team-specific calculation now uses PLAYER-LEVEL weights (walk_per_*_player) and includes strikeouts, matching the per-game player endpoint aggregation shown on Top page.
+      * When no team is provided, legacy behavior (all games both sides with TEAM-level weights) is retained for a broad 'league total'.
+    """
+    if not team:
+        # League-wide total using team-level weights (unchanged legacy behavior)
+        q = session.query(db.Game).filter(db.Game.date == date)
+        totals = {"hits": 0, "homers": 0, "errors": 0}
+        for g in q:
+            totals["hits"] += g.home_hits + g.away_hits
+            totals["homers"] += g.home_homers + g.away_homers
+            totals["errors"] += g.home_errors + g.away_errors
+        steps = (
+            settings.walk_base
+            + settings.walk_per_hit * totals["hits"]
+            + settings.walk_per_hr * totals["homers"]
+            + settings.walk_per_error * totals["errors"]
+        )
+        return max(0, int(steps))
+
+    # Team-specific: aggregate player stats from BatterStat for accuracy & strikeouts
+    from .db import BatterStat, Game as GameModel
+    rows = session.query(BatterStat).filter(BatterStat.date == date, BatterStat.team == team).all()
+    hits = sum(r.h for r in rows)
+    homers = sum(getattr(r, 'hr', 0) for r in rows)
+    errors = sum(getattr(r, 'errors', 0) for r in rows)
+    strikeouts = sum(r.so for r in rows)
+    if not rows:
+        # Fallback: if no BatterStat yet (e.g., early live game before persistence), derive from Game row side-only
+        gq = session.query(GameModel).filter(GameModel.date == date, (GameModel.home_team == team) | (GameModel.away_team == team))
+        for g in gq:
+            if g.home_team == team:
+                hits += g.home_hits
+                homers += g.home_homers
+                errors += g.home_errors
+            else:
+                hits += g.away_hits
+                homers += g.away_homers
+                errors += g.away_errors
+        # strikeouts unavailable without batter stats; treat as 0
     steps = (
         settings.walk_base
-        + settings.walk_per_hit * totals["hits"]
-        + settings.walk_per_hr * totals["homers"]
-        + settings.walk_per_error * totals["errors"]
+        + settings.walk_per_hit_player * hits
+        + settings.walk_per_hr_player * homers
+        + settings.walk_per_error_player * errors
+        + settings.walk_per_so_player * strikeouts
     )
     return max(0, int(steps))
