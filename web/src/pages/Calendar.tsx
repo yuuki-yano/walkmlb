@@ -32,6 +32,7 @@ export default function Calendar() {
   const [days, setDays] = useState<Array<{date:string; games:any[]}>>([]);
   const [stepsDays, setStepsDays] = useState<Record<string, number>>({});
   const [goalCache, setGoalCache] = useState<Record<string, number>>({});
+  const [rangeMonthKey, setRangeMonthKey] = useState<string>('');
   // シンプル表示をデフォルト ON
   const [simpleMobile, setSimpleMobile] = useState<boolean>(true);
   const access = localStorage.getItem('access_token');
@@ -104,30 +105,37 @@ export default function Calendar() {
   }, [month, access]);
 
   // Compute or fetch daily goal per day (team-based)
+  // Fetch monthly goals in one API call when month or selected team changes
+  useEffect(()=>{
+    const t = teamSelect || favTeams[0] || '';
+    const mk = month + '::' + t;
+    if (rangeMonthKey === mk) return;
+    (async()=>{
+      try {
+        const u = new URL(base + '/api/steps/goal/range', window.location.origin);
+        u.searchParams.set('month', month);
+        if (t) u.searchParams.set('team', t);
+        const r = await fetch(u.toString());
+        if (!r.ok) return;
+        const j = await r.json();
+        const map: Record<string, number> = {};
+        for (const d of j.days || []) map[d.date] = d.steps || 0;
+        setGoalCache(prev => {
+          const merged = { ...prev };
+            for (const [d, v] of Object.entries(map)) {
+              merged[`${d}::${t}`] = v;
+            }
+          return merged;
+        });
+        setRangeMonthKey(mk);
+      } catch {}
+    })();
+  }, [month, teamSelect, favTeams, base, rangeMonthKey]);
+
   const daysWithGoal = useMemo(()=>{
     const t = teamSelect || favTeams[0] || '';
-    return (days||[]).map(d => {
-      const key = `${d.date}::${t}`;
-      let goal = goalCache[key];
-      if (goal === undefined) {
-        (async()=>{
-          try {
-            const u = new URL(base + '/api/steps/goal', window.location.origin);
-            u.searchParams.set('date', d.date);
-            if (t) u.searchParams.set('team', t);
-            const r = await fetch(u.toString());
-            if (r.ok) {
-              const j = await r.json();
-              // unify with Top: just trust server steps (local player overrides not applicable for multi-day view)
-              setGoalCache(prev => ({ ...prev, [key]: j.steps||0 }));
-            }
-          } catch {}
-        })();
-        goal = 0;
-      }
-      return { ...d, goal };
-    });
-  }, [days, teamSelect, favTeams, goalCache, base]);
+    return (days||[]).map(d => ({ ...d, goal: goalCache[`${d.date}::${t}`] ?? 0 }));
+  }, [days, teamSelect, favTeams, goalCache]);
 
   // Responsive: detect small width
   useEffect(()=>{
