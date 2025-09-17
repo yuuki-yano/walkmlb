@@ -351,6 +351,16 @@ async def game_pitchers(game_pk: int, side: str, admin: bool | None = False, aut
             # 取得失敗時は既存キャッシュ (無ければ None) のまま継続
             pass
     if not box:
+        # If final, try one-time fetch to persist final snapshot
+        try:
+            from ..mlb_api import _is_final_cached, fetch_boxscore
+            if _is_final_cached(game_pk):
+                try:
+                    box = await fetch_boxscore(game_pk)
+                except Exception:
+                    box = None
+        except Exception:
+            pass
         # Fallback: try DB pitcher_stats rows safely
         db_local = SessionLocal()
         try:
