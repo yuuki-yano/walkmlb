@@ -1,11 +1,37 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
 export default function FooterNav() {
   const loc = useLocation();
   const is = (p: string) => loc.pathname === p;
-  const loggedIn = !!localStorage.getItem('access_token');
-  const doLogout = async () => {
+  const [loggedIn, setLoggedIn] = useState<boolean>(!!localStorage.getItem('access_token'));
+  // Validate token once on mount and when hash route changes
+  useEffect(()=>{
     const base = new URL('.', window.location.href).pathname.replace(/\/$/, '');
+    const access = localStorage.getItem('access_token');
+    if (!access) { setLoggedIn(false); return; }
+    let aborted = false;
+    (async()=>{
+      try {
+        const r = await fetch(base + '/api/auth/me', { headers: { Authorization: 'Bearer ' + access }});
+        if (aborted) return;
+        if (r.status === 401) {
+          // invalid/expired -> force logout UI state
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+          setLoggedIn(false);
+        } else if (r.ok) {
+          setLoggedIn(true);
+        }
+      } catch {
+        // network error -> do not flip, but if token is clearly broken, mark logged-out
+        setLoggedIn(!!localStorage.getItem('access_token'));
+      }
+    })();
+    return ()=>{ aborted = true; };
+  }, [loc.pathname]);
+  const doLogout = async () => {
+  const base = new URL('.', window.location.href).pathname.replace(/\/$/, '');
     const refresh = localStorage.getItem('refresh_token');
     try {
       if (refresh) {
